@@ -85,16 +85,6 @@ def test_the_display_says_real_funds(config):
     assert "LIVE" in frame and "real funds" in frame
 
 
-def test_a_dry_run_never_claims_funds_are_at_risk(config):
-    config.dry_run = True
-    market = FakeDexScreener([])
-    engine = TradingEngine(config, storage=Storage(":memory:"), data=market,
-                           executor=SimulatedExecutor(config, data=market, rng=random.Random(1)))
-    frame = ConsoleView(force=True).frame(engine, None)
-    assert "DRY RUN" in frame
-    assert "real funds" not in frame
-
-
 def test_the_frame_is_pure_ascii_when_the_console_cannot_do_better(traded, monkeypatch):
     """A cp1252 console must not crash on a box-drawing character."""
     import memebot.ui as ui

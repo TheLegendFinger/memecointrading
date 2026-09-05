@@ -63,22 +63,21 @@ folder — it takes a minute), then opens the menu. On Windows
 default; it applies to that one command only.
 
 **From here you can do the whole thing with numbers**: `8` for the wallet, `9`
-to check the feeds, `2` for a dry run, `1` to trade for real. The steps below
-give the equivalent commands if you prefer typing them.
+to check the feeds, `5` to see the market, `1` to trade for real. The steps
+below give the equivalent commands if you prefer typing them.
 
-## 3. Dry run first
+## 3. Look at what it would buy
 
-Do not skip this. Menu option **2** runs the whole thing against the live market
-— scanning, filtering, scoring, sizing — and logs exactly what it would buy and
-why, without a wallet and without sending a single order.
+Menu option **5** scans the live market and prints the candidates it would
+consider, scored, without trading. Menu **7** checks the data feeds are working.
 
-Watch it for a while. If it never finds anything, the market is quiet or your
-settings are strict; `doctor` (menu **8**) tells you which, and the
+Do both before step 4. If the scan finds nothing, the market is quiet or your
+settings are strict — the health check tells you which, and the
 [README](README.md#configuration) says what to loosen.
 
 ## 4. Create the wallet
 
-Menu option **7**, then **2**. (Or `./scripts/wallet.sh --new --save` /
+Menu option **6**, then **2**. (Or `./scripts/wallet.sh --new --save` /
 `scripts\wallet.ps1 -New -Save`.)
 
 It prints an **address** and a **12-word seed phrase**, and saves both to `.env`
@@ -167,8 +166,8 @@ To sell everything at market:
 .\.venv\Scripts\python.exe -m memebot liquidate  # Windows
 ```
 
-To take the money out, use menu **7** then **5** (Withdraw) — it sends SOL to
-any address you give it, an amount or `all`. Close positions first (menu **3**),
+To take the money out, use menu **6** then **5** (Withdraw) — it sends SOL to
+any address you give it, an amount or `all`. Close positions first (menu **2**),
 because withdrawing moves SOL and not the memecoins.
 
 You can also import the seed phrase from step 4 into Phantom and move funds from
@@ -202,7 +201,6 @@ the balance drops and it trades smaller.
 | --- | --- |
 | `LIVE_TRADING_CONFIRM` | Set only when you start the bot, only for that process. Nothing else can trade. |
 | Typing `LIVE` | The last manual gate before any order. |
-| `--dry-run` | Runs everything except sending orders. Needs no wallet. |
 | Fee reserve | 0.025 SOL is never traded, so the wallet can always pay to sell. |
 | Price impact check | An order is dropped if the route's impact exceeds your slippage tolerance. |
 | Signature check | If the transaction is not the one your wallet should sign, nothing is sent. |
@@ -240,7 +238,7 @@ key from [Helius](https://helius.dev) and put it in `.env`:
 MEMEBOT_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_KEY
 ```
 
-**It never buys anything** — run the health check (menu **8**). The pipeline
+**It never buys anything** — run the health check (menu **7**). The pipeline
 line tells you whether the filters or the score threshold are the blocker.
 
 **You want it to stop right now** — Ctrl+C, then `liquidate` as in step 8.

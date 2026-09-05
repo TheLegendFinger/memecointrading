@@ -205,6 +205,35 @@ class Storage:
         for statement in self._schema_statements():
             self.execute(statement)
         self._commit()
+        self._migrate()
+
+    # The stored state's shape, bumped when old values stop being meaningful.
+    STATE_VERSION = 2
+
+    def _migrate(self) -> None:
+        """Bring an older database's state up to date.
+
+        Version 2: the bankroll became the wallet's on-chain balance. Databases
+        written before that hold a cash figure seeded from a config setting that
+        no longer exists - a number the bot never actually had. Showing it as
+        equity would be a lie, so it goes; the next cycle reads the real one.
+        """
+        try:
+            version = int(self.get_state("state_version", 0) or 0)
+        except (TypeError, ValueError):
+            version = 0
+        if version >= self.STATE_VERSION:
+            return
+
+        if version < 2:
+            for key in ("cash_usd", "starting_cash_usd", "day_start_equity"):
+                self.execute("DELETE FROM state WHERE key = ?", (key,))
+            # The equity curve recorded that same imaginary bankroll.
+            self.execute("DELETE FROM equity")
+            self._commit()
+            log.debug("Cleared a pre-wallet bankroll from %s", self.target)
+
+        self.set_state("state_version", self.STATE_VERSION)
 
     # ---- key/value state -------------------------------------------------------
     def get_state(self, key: str, default: Any = None) -> Any:

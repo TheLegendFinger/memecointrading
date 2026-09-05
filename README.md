@@ -5,11 +5,9 @@ out the obvious traps, scores what is left on a momentum/volume model, sizes
 positions against your bankroll, and manages exits with stops, trailing stops
 and time limits.
 
-**It trades real money.** There is no practice mode: every order is a real swap
-signed with your wallet and broadcast through the
-[Jupiter](https://station.jup.ag/) aggregator. A `--dry-run` switch makes it
-decide and log without sending anything, which is the closest thing to a
-rehearsal.
+**It trades real money.** There is no practice mode and no dry run: every order
+is a real swap signed with your wallet and broadcast through the
+[Jupiter](https://station.jup.ag/) aggregator.
 
 Runs on **Windows, macOS and Linux**.
 
@@ -46,17 +44,16 @@ time, then opens a menu — everything is a number:
 
    TRADE
     1  Start trading         REAL money on Solana
-    2  Dry run               decide and log, place no orders
-    3  Close all positions   sell everything at market
+    2  Close all positions   sell everything at market
 
    LOOK
-    4  Portfolio             equity, open positions, win rate
-    5  Trade history         recent fills with fees and P&L
-    6  Scan the market       what the bot sees right now
+    3  Portfolio             equity, open positions, win rate
+    4  Trade history         recent fills with fees and P&L
+    5  Scan the market       what the bot sees right now
 
    SETUP
-    7  Wallet                create, fund, back up, withdraw
-    8  Health check          are the market feeds reachable?
+    6  Wallet                create, fund, back up, withdraw
+    7  Health check          are the market feeds reachable?
 
     0  Quit
 
@@ -68,9 +65,9 @@ individual script exists in both flavours — `scripts/run.sh` and
 `scripts\run.ps1`, `scripts/doctor.sh` and `scripts\doctor.ps1`, and so on —
 and the CLI works directly too. The menu is a front door, not a replacement.
 
-**Before risking anything**, run a dry run (menu **2**). It scans the live
-market, scores it and logs exactly what it would buy and why, without a wallet
-and without sending an order.
+**Before risking anything**, look at what it would buy: menu **5** scans the
+live market and prints the scored candidates without trading. Menu **7** checks
+the feeds are reachable.
 
 <details>
 <summary>Without the scripts</summary>
@@ -80,9 +77,9 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt -r requirements-live.txt
 cp config.example.yaml config.yaml
 
-python -m memebot                    # the same menu
-python -m memebot doctor             # or go straight to a command
-python -m memebot run --dry-run      # decide and log, send nothing
+python -m memebot           # the same menu
+python -m memebot doctor    # or go straight to a command
+python -m memebot scan      # what it would consider buying
 ```
 </details>
 
@@ -185,8 +182,8 @@ change anything — there is no wallet key in the deployment at all.
 | `reset` | Wipe the bot's trade history. Moves no funds. |
 | `config` | Print the effective configuration after file + env + flags. |
 
-Global flags: `--config`, `--db`, `--log-level`, `--dry-run`. `--db` takes a
-SQLite path *or* a `postgresql://` URL.
+Global flags: `--config`, `--db`, `--log-level`. `--db` takes a SQLite path
+*or* a `postgresql://` URL.
 
 `python scripts/dev_server.py` serves the read-only dashboard locally.
 
@@ -273,9 +270,6 @@ balances** from the confirmed transaction rather than the quote's estimate.
 
 Failures are returned as unfilled orders and logged; they never corrupt the
 position book. An order that reverts is skipped until the next cycle.
-
-`--dry-run` runs all of that except the last four steps: it scans, scores, sizes
-and logs the decision, then sends nothing. It needs no wallet.
 
 ## The wallet
 
@@ -412,8 +406,8 @@ with `strategy.name` in the config.
 ## Limitations, honestly
 
 * The momentum model is a reasonable starting point, **not** a proven edge. It
-  has not been backtested against historical data. Watch it with `--dry-run` for
-  a while, and start with an amount you would not miss.
+  has not been backtested against historical data. Look at what `scan` turns up
+  for a while first, and start with an amount you would not miss.
 * Discovery depends on DexScreener's free API. When it rate limits or lags, the
   bot sees a stale market. `doctor` will tell you when that is happening.
 * There is no honeypot/mint-authority check yet. The liquidity, age and

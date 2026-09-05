@@ -43,15 +43,14 @@ class Item:
 
 MENU: List[Item] = [
     Item("1", "Start trading", "REAL money on Solana", "trade", "TRADE", YELLOW),
-    Item("2", "Dry run", "decide and log, place no orders", "dry_run", "TRADE", GREEN),
-    Item("3", "Close all positions", "sell everything at market", "liquidate", "TRADE", RED),
+    Item("2", "Close all positions", "sell everything at market", "liquidate", "TRADE", RED),
 
-    Item("4", "Portfolio", "equity, open positions, win rate", "status", "LOOK"),
-    Item("5", "Trade history", "recent fills with fees and P&L", "trades", "LOOK"),
-    Item("6", "Scan the market", "what the bot sees right now", "scan", "LOOK"),
+    Item("3", "Portfolio", "equity, open positions, win rate", "status", "LOOK"),
+    Item("4", "Trade history", "recent fills with fees and P&L", "trades", "LOOK"),
+    Item("5", "Scan the market", "what the bot sees right now", "scan", "LOOK"),
 
-    Item("7", "Wallet", "create, fund, back up, withdraw", "wallet", "SETUP"),
-    Item("8", "Health check", "are the market feeds reachable?", "doctor", "SETUP"),
+    Item("6", "Wallet", "create, fund, back up, withdraw", "wallet", "SETUP"),
+    Item("7", "Health check", "are the market feeds reachable?", "doctor", "SETUP"),
 
     Item("0", "Quit", "", "quit", ""),
 ]
@@ -100,7 +99,7 @@ class Menu:
             return paint(f"  (could not read the portfolio: {exc})", GREY)
 
         if stats["closed_trades"] == 0 and stats["open_positions"] == 0 and not stats["realized_pnl_usd"]:
-            return paint("  No trades yet. Press 2 for a dry run, or 1 to trade.", GREY)
+            return paint("  No trades yet. Press 5 to see the market, 1 to trade.", GREY)
 
         change = stats["total_return_pct"]
         colour = GREEN if change > 0 else (RED if change < 0 else GREY)
@@ -144,7 +143,7 @@ class Menu:
             title = paint(f"{item.title:<22}", item.style or WHITE)
             desc = paint(item.description, GREY)
             self.output(f"{key}{title}{desc}")
-            if item.key in ("3", "6", "8"):
+            if item.key in ("2", "5", "7"):
                 self.output("")
 
         if self.message:
@@ -181,7 +180,7 @@ class Menu:
                 return 0
             item = next((i for i in MENU if i.key == choice), None)
             if item is None:
-                self.notify(f"'{choice}' is not on the menu - pick a number from 0 to 8.", YELLOW)
+                self.notify(f"'{choice}' is not on the menu - pick a number from 0 to 7.", YELLOW)
                 continue
             try:
                 self.dispatch(item.action)
@@ -227,13 +226,12 @@ class Menu:
             self.notify("Installed, but the Solana packages still will not import.", RED)
             return False
 
-    def _run_engine(self, dry_run: bool = False) -> None:
+    def _run_engine(self) -> None:
         from .console_view import ConsoleView
         from .engine import TradingEngine
         from .logging_utils import setup_logging
 
         config = self.load()
-        config.dry_run = dry_run
         view = ConsoleView(output=self.output)
 
         # With the live display on, log lines would scribble over the frame, so
@@ -248,8 +246,6 @@ class Menu:
             return
 
         self.output("")
-        if dry_run:
-            self.output(paint("  Dry run: it decides and logs, but places no orders.", GREEN))
         self.output(paint("  First scan takes a few seconds...", GREY))
         self.output(paint("  Ctrl+C stops it and returns to the menu.", GREY))
         try:
@@ -258,22 +254,12 @@ class Menu:
             engine.storage.close()
         self.notify("Stopped. Positions are still open - use 3 to close them.", GREY)
 
-    def do_dry_run(self) -> None:
-        """Everything the real thing does, except sending orders."""
-        if self.clear:
-            clear_screen()
-        self.output(paint("\n  DRY RUN", BOLD, GREEN))
-        self.output(paint("  Live market, real scoring, real sizing - no orders sent.\n", GREY))
-        if not self._prepare(require_wallet=False):
-            return
-        self._run_engine(dry_run=True)
-
     def do_trade(self) -> None:
         if self.clear:
             clear_screen()
         self.output(paint("\n  START TRADING", BOLD, YELLOW))
         self.output("")
-        if not self._prepare(require_wallet=True):
+        if not self._prepare():
             return
 
         self.output("")
@@ -287,7 +273,7 @@ class Menu:
 
         self._run_engine()
 
-    def _prepare(self, require_wallet: bool) -> bool:
+    def _prepare(self) -> bool:
         """Config, packages, interlock and wallet - the things a run needs."""
         if not Path(CONFIG).exists() and Path(CONFIG_EXAMPLE).exists():
             Path(CONFIG).write_text(Path(CONFIG_EXAMPLE).read_text())
@@ -299,9 +285,6 @@ class Menu:
         # Arming is not trading: it lets the checks below see the real path, and
         # it lives only in this process, so quitting the menu disarms it.
         os.environ[CONFIRM_ENV] = CONFIRM_VALUE
-
-        if not require_wallet:
-            return True
 
         from argparse import Namespace
 

@@ -70,9 +70,7 @@ def cmd_run(args: argparse.Namespace, config: BotConfig) -> int:
     setup_logging(config.log_level, config.log_file, console=not view.active)
     engine = _build_engine(config, on_cycle=view if view.active else None)
 
-    # A dry run sends nothing, so there is nothing to confirm and no wallet to
-    # look up.
-    if not args.yes and not config.dry_run:
+    if not args.yes:
         try:
             wallet = engine.executor.wallet_address
         except Exception as exc:  # noqa: BLE001 - report, do not trace
@@ -569,8 +567,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-c", "--config", help="path to a YAML or JSON config file")
     parser.add_argument("--db", help="override the state database path")
     parser.add_argument("--log-level", help="DEBUG, INFO, WARNING, ERROR")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="evaluate and log decisions without sending any order")
 
     sub = parser.add_subparsers(dest="command", required=False)
 
@@ -583,15 +579,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("-y", "--yes", action="store_true", help="skip the live-trading confirmation")
     run.add_argument("--plain", action="store_true",
                      help="plain log lines instead of the live display")
-    # Also accepted after the subcommand, so `run --dry-run` works as naturally
-    # as `--dry-run run`.
-    run.add_argument("--dry-run", dest="run_dry_run", action="store_true",
-                     help="evaluate and log decisions without sending any order")
     run.set_defaults(func=cmd_run)
 
     once = sub.add_parser("once", help="run a single cycle and exit")
-    once.add_argument("--dry-run", dest="run_dry_run", action="store_true",
-                      help="evaluate and log decisions without sending any order")
     once.set_defaults(func=cmd_once)
 
     scan = sub.add_parser("scan", help="show scored candidates without trading")
@@ -657,7 +647,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     overrides: Dict[str, Any] = {
         "state_db": args.db,
         "log_level": args.log_level,
-        "dry_run": True if (args.dry_run or getattr(args, "run_dry_run", False)) else None,
     }
     if getattr(args, "interval", None):
         overrides["poll_interval_seconds"] = args.interval

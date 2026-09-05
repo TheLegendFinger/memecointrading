@@ -13,7 +13,6 @@ poll_interval_seconds: 45        # fewer API calls; memecoin moves last minutes
 state_db: data/memebot.sqlite3
 log_file: logs/memebot.log
 log_level: INFO
-dry_run: false                   # true = decide and log, place no orders
 
 data:
   chain: solana

@@ -125,10 +125,6 @@ class TradingEngine:
         self._stop = True
 
     def preflight(self) -> Optional[str]:
-        """Is the executor ready? A dry run needs nothing: it sends no orders,
-        so it neither touches the wallet nor needs the interlock."""
-        if self.config.dry_run:
-            return None
         return self.executor.preflight()
 
     # ---- live balance ----------------------------------------------------------
@@ -194,13 +190,6 @@ class TradingEngine:
             slippage_bps=self.config.execution.slippage_bps,
             reason=reason,
         )
-        if self.config.dry_run:
-            log.info("[dry-run] would SELL %s - %s", position.token, reason)
-            self.emit("dry_run", f"Would sell {position.token.symbol}",
-                      symbol=position.token.symbol, address=position.token.address, detail=reason)
-            report.note_skip("dry_run")
-            return
-
         fill = self.executor.execute(order)
         if not fill.ok:
             log.warning("SELL %s failed: %s", position.token, fill.error)
@@ -259,14 +248,6 @@ class TradingEngine:
             reason=signal_obj.reason,
             pair=pair,
         )
-        if self.config.dry_run:
-            log.info("[dry-run] would BUY %s for $%.2f - %s", signal_obj.token, size_usd, signal_obj.reason)
-            self.emit("dry_run", f"Would buy {signal_obj.token.symbol} for ${size_usd:,.2f}",
-                      symbol=signal_obj.token.symbol, address=signal_obj.token.address,
-                      detail=signal_obj.reason)
-            report.note_skip("dry_run")
-            return
-
         fill = self.executor.execute(order)
         if not fill.ok:
             log.warning("BUY %s failed: %s", signal_obj.token, fill.error)
@@ -412,18 +393,13 @@ class TradingEngine:
         if blocked:
             raise RuntimeError(f"Executor is not ready: {blocked}")
 
-        if self.config.dry_run:
-            log.info("Starting memebot | DRY RUN - decisions are logged, no orders are sent")
-            self.emit("start", "Started a dry run",
-                      detail="no orders will be sent")
-        else:
-            log.info(
-                "Starting memebot | %s | equity $%.2f | strategy=%s",
-                self.executor.describe(), self.portfolio.equity, self.strategy.name,
-            )
-            self.emit("start", "Started trading", level="warn",
-                      detail=f"equity ${self.portfolio.equity:,.2f} | {self.executor.describe()}")
-            log.warning("Real funds are at risk on every order")
+        log.info(
+            "Starting memebot | %s | equity $%.2f | strategy=%s",
+            self.executor.describe(), self.portfolio.equity, self.strategy.name,
+        )
+        self.emit("start", "Started trading", level="warn",
+                  detail=f"equity ${self.portfolio.equity:,.2f} | {self.executor.describe()}")
+        log.warning("Real funds are at risk on every order")
 
         self.install_signal_handlers()
         while not self._stop:

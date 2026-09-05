@@ -135,17 +135,6 @@ def test_reentry_cooldown_after_an_exit(config, hot_pair):
     assert any("cooldown" in reason for reason in report.skipped)
 
 
-def test_dry_run_never_trades(config, hot_pair):
-    config.dry_run = True
-    engine, _ = build_engine(config, [hot_pair])
-    report = engine.run_cycle()
-
-    assert report.signals >= 1
-    assert not report.opened
-    assert not engine.portfolio.positions
-    assert engine.portfolio.cash == 1_000.0
-
-
 def test_halt_on_daily_loss_stops_new_entries(config, hot_pair):
     config.risk.max_daily_loss_pct = 0.05
     engine, _ = build_engine(config, [hot_pair])

@@ -26,17 +26,24 @@ class FakeCursor:
 
 
 class FakePostgresConnection:
-    """Records every statement; replays canned rows for SELECTs."""
+    """Records every statement; replays canned rows for SELECTs.
+
+    `rows` are returned for the queries under test. The schema migration runs
+    first and reads the state version, which must not be fed those rows.
+    """
 
     def __init__(self, rows=None):
         self.statements = []
         self.rows = rows or []
         self.closed = False
         self.commits = 0
+        self.ready = False        # flipped once construction is done
 
     def execute(self, sql, params=()):
         self.statements.append((sql, params))
-        return FakeCursor(self.rows if sql.strip().upper().startswith("SELECT") else [])
+        if not sql.strip().upper().startswith("SELECT"):
+            return FakeCursor([])
+        return FakeCursor(self.rows if self.ready else [])
 
     def commit(self):
         self.commits += 1
@@ -48,6 +55,7 @@ class FakePostgresConnection:
 def pg_storage(rows=None):
     conn = FakePostgresConnection(rows)
     store = Storage("postgresql://user:pw@host/db", connection=conn)
+    conn.ready = True
     return store, conn
 
 
@@ -231,3 +239,88 @@ def test_missing_psycopg_is_reported_clearly(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", blocked)
     with pytest.raises(RuntimeError, match="psycopg"):
         Storage("postgres://user:pw@host/db")
+
+
+# ---- migrating away an imaginary bankroll --------------------------------------
+def test_a_pre_wallet_bankroll_is_cleared_on_open(tmp_path):
+    """An older database holds cash seeded from a config setting that is gone.
+
+    Showing that as equity would report money the bot never had, so it is
+    dropped and the next cycle reads the real balance from the chain.
+    """
+    db = str(tmp_path / "old.sqlite3")
+    old = Storage(db)
+    old.execute("DELETE FROM state WHERE key = 'state_version'")
+    old.set_state("cash_usd", 100.0)
+    old.set_state("starting_cash_usd", 100.0)
+    old.set_state("day_start_equity", 100.0)
+    old.record_equity(100.0, 0.0, ts=1.0)
+    old._commit()
+    old.close()
+
+    reopened = Storage(db)
+    try:
+        assert reopened.get_state("cash_usd") is None
+        assert reopened.get_state("starting_cash_usd") is None
+        assert reopened.get_state("day_start_equity") is None
+        assert reopened.equity_curve() == [], "the curve recorded the same fiction"
+        assert reopened.get_state("state_version") == Storage.STATE_VERSION
+    finally:
+        reopened.close()
+
+
+def test_a_real_balance_survives_reopening(tmp_path):
+    """Once migrated, a wallet-derived balance must persist across restarts."""
+    db = str(tmp_path / "current.sqlite3")
+    store = Storage(db)
+    store.set_state("cash_usd", 87.40)
+    store.set_state("starting_cash_usd", 87.40)
+    store.close()
+
+    reopened = Storage(db)
+    try:
+        assert reopened.get_state("cash_usd") == 87.40
+        assert reopened.get_state("starting_cash_usd") == 87.40
+    finally:
+        reopened.close()
+
+
+def test_the_migration_leaves_trades_and_positions_alone(tmp_path):
+    """It clears an invented bankroll, not the record of what actually happened."""
+    from memebot.models import Fill, Order, Side, Token
+
+    db = str(tmp_path / "old.sqlite3")
+    old = Storage(db)
+    old.execute("DELETE FROM state WHERE key = 'state_version'")
+    old.set_state("cash_usd", 100.0)
+    token = Token("mint-x", "X")
+    old.record_fill(Fill(order=Order(token=token, side=Side.BUY, reference_price=1.0,
+                                     usd_amount=10.0),
+                         ok=True, price=1.0, token_amount=10, usd_amount=10.0))
+    old.save_position(Position(token=token, quantity=10, avg_price=1.0, cost_usd=10.0))
+    old.close()
+
+    reopened = Storage(db)
+    try:
+        assert reopened.get_state("cash_usd") is None
+        assert len(reopened.list_trades()) == 1
+        assert len(reopened.load_positions()) == 1
+    finally:
+        reopened.close()
+
+
+def test_the_migration_runs_once(tmp_path):
+    db = str(tmp_path / "once.sqlite3")
+    Storage(db).close()
+
+    store = Storage(db)
+    try:
+        store.set_state("cash_usd", 50.0)
+    finally:
+        store.close()
+
+    reopened = Storage(db)
+    try:
+        assert reopened.get_state("cash_usd") == 50.0, "a migrated database is not re-migrated"
+    finally:
+        reopened.close()

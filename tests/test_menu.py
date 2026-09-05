@@ -149,10 +149,10 @@ def test_every_menu_item_has_a_handler():
 
 
 @pytest.mark.parametrize("key, expected", [
-    ("4", ["status"]),
-    ("5", ["trades", "--limit", "25"]),
-    ("6", ["scan", "--limit", "20"]),
-    ("8", ["doctor"]),
+    ("3", ["status"]),
+    ("4", ["trades", "--limit", "25"]),
+    ("5", ["scan", "--limit", "20"]),
+    ("7", ["doctor"]),
 ])
 def test_read_only_actions_call_the_cli(monkeypatch, key, expected):
     calls = []
@@ -170,7 +170,7 @@ def test_an_action_that_raises_is_reported_not_fatal(monkeypatch):
         raise RuntimeError("kaboom")
 
     monkeypatch.setattr(Menu, "do_status", explode)
-    menu, driver = menu_for("4", "0")
+    menu, driver = menu_for("3", "0")
 
     assert menu.run() == 0
     assert "RuntimeError: kaboom" in driver.text
@@ -187,34 +187,11 @@ def test_ctrl_c_inside_an_action_returns_to_the_menu(monkeypatch):
     assert "Stopped." in driver.text
 
 
-# ---- trading actions -----------------------------------------------------------
-def test_a_dry_run_places_no_orders(monkeypatch):
-    seen = {}
-    monkeypatch.setattr(Menu, "_prepare", lambda self, require_wallet: True)
-    monkeypatch.setattr(Menu, "_run_engine", lambda self, dry_run=False: seen.update(dry=dry_run))
-
-    menu, _driver = menu_for("2", "0")
-    menu.run()
-    assert seen == {"dry": True}
-
-
-def test_a_dry_run_does_not_need_a_wallet(monkeypatch):
-    """Nothing is sent, so there is nothing to sign with."""
-    asked = {}
-    monkeypatch.setattr(Menu, "_prepare",
-                        lambda self, require_wallet: asked.update(wallet=require_wallet) or True)
-    monkeypatch.setattr(Menu, "_run_engine", lambda self, dry_run=False: None)
-
-    menu, _driver = menu_for("2", "0")
-    menu.run()
-    assert asked == {"wallet": False}
-
-
 def test_trading_needs_the_word_LIVE(monkeypatch):
     """Anything other than exactly LIVE must not start real trading."""
     started = []
-    monkeypatch.setattr(Menu, "_prepare", lambda self, require_wallet: True)
-    monkeypatch.setattr(Menu, "_run_engine", lambda self, dry_run=False: started.append(True))
+    monkeypatch.setattr(Menu, "_prepare", lambda self: True)
+    monkeypatch.setattr(Menu, "_run_engine", lambda self: started.append(True))
 
     # Lower case, a vague yes, or just pressing Enter must never be enough.
     for answer in ("live", "yes", "y", "ok", ""):
@@ -227,8 +204,8 @@ def test_trading_needs_the_word_LIVE(monkeypatch):
 def test_surrounding_whitespace_does_not_defeat_the_confirmation(monkeypatch):
     """Typing the word with a stray space still counts - they typed the word."""
     started = []
-    monkeypatch.setattr(Menu, "_prepare", lambda self, require_wallet: True)
-    monkeypatch.setattr(Menu, "_run_engine", lambda self, dry_run=False: started.append(True))
+    monkeypatch.setattr(Menu, "_prepare", lambda self: True)
+    monkeypatch.setattr(Menu, "_run_engine", lambda self: started.append(True))
 
     menu, _driver = menu_for("1", "  LIVE  ", "0")
     menu.run()
@@ -237,19 +214,19 @@ def test_surrounding_whitespace_does_not_defeat_the_confirmation(monkeypatch):
 
 def test_trading_starts_when_confirmed(monkeypatch):
     started = []
-    monkeypatch.setattr(Menu, "_prepare", lambda self, require_wallet: True)
-    monkeypatch.setattr(Menu, "_run_engine", lambda self, dry_run=False: started.append(dry_run))
+    monkeypatch.setattr(Menu, "_prepare", lambda self: True)
+    monkeypatch.setattr(Menu, "_run_engine", lambda self: started.append(True))
 
     menu, _driver = menu_for("1", "LIVE", "0")
     menu.run()
-    assert started == [False], "the real thing, not a dry run"
+    assert started == [True]
 
 
 def test_trading_stops_when_the_wallet_is_not_ready(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     started = []
     monkeypatch.setattr(Menu, "ensure_solana_packages", lambda self: True)
-    monkeypatch.setattr(Menu, "_run_engine", lambda self, dry_run=False: started.append(dry_run))
+    monkeypatch.setattr(Menu, "_run_engine", lambda self: started.append(True))
     monkeypatch.setattr("memebot.cli.cmd_wallet", lambda args, config: 3)  # exists, unfunded
 
     menu, driver = menu_for("1", "", "0")
@@ -271,7 +248,7 @@ def test_trading_offers_to_create_a_missing_wallet(monkeypatch, tmp_path):
 
     monkeypatch.setattr("memebot.cli.cmd_wallet", fake_wallet)
     started = []
-    monkeypatch.setattr(Menu, "_run_engine", lambda self, dry_run=False: started.append(dry_run))
+    monkeypatch.setattr(Menu, "_run_engine", lambda self: started.append(True))
 
     menu, driver = menu_for("1", "y", "", "0")
     menu.run()
@@ -283,7 +260,7 @@ def test_trading_offers_to_create_a_missing_wallet(monkeypatch, tmp_path):
 
 def test_liquidate_says_so_when_there_is_nothing_to_close(tmp_path, monkeypatch):
     monkeypatch.setenv("MEMEBOT_STATE_DB", str(tmp_path / "empty.sqlite3"))
-    menu, driver = menu_for("3", "0")
+    menu, driver = menu_for("2", "0")
     menu.run()
     assert "No open positions" in driver.text
 
@@ -312,7 +289,7 @@ def test_running_attaches_the_live_display(monkeypatch, tmp_path):
             captured["ran"] = True
 
     monkeypatch.setattr("memebot.engine.TradingEngine", StubEngine)
-    monkeypatch.setattr(Menu, "_prepare", lambda self, require_wallet: True)
+    monkeypatch.setattr(Menu, "_prepare", lambda self: True)
 
     menu, _driver = menu_for("1", "LIVE", "0")
     menu.run()
@@ -339,7 +316,7 @@ def test_logging_goes_to_the_file_while_the_display_is_up(monkeypatch, tmp_path)
             pass
 
     monkeypatch.setattr("memebot.engine.TradingEngine", StubEngine)
-    monkeypatch.setattr(Menu, "_prepare", lambda self, require_wallet: True)
+    monkeypatch.setattr(Menu, "_prepare", lambda self: True)
     monkeypatch.setattr("memebot.logging_utils.setup_logging",
                         lambda level, log_file=None, console=True: calls.update(console=console))
 
@@ -354,7 +331,7 @@ def test_logging_goes_to_the_file_while_the_display_is_up(monkeypatch, tmp_path)
 # ---- the wallet submenu --------------------------------------------------------
 def test_the_wallet_submenu_offers_every_operation(monkeypatch):
     monkeypatch.setattr(Menu, "ensure_solana_packages", lambda self: True)
-    menu, driver = menu_for("7", "0", "0")
+    menu, driver = menu_for("6", "0", "0")
     menu.run()
 
     for expected in ("Show wallet", "Create a new wallet", "Show seed phrase",
@@ -367,7 +344,7 @@ def test_the_wallet_submenu_installs_the_solana_packages_first(monkeypatch):
     calls = []
     monkeypatch.setattr(Menu, "ensure_solana_packages",
                         lambda self: calls.append(True) or True)
-    menu, _driver = menu_for("7", "0", "0")
+    menu, _driver = menu_for("6", "0", "0")
     menu.run()
     assert calls, "the wallet menu must ensure its dependencies"
 
@@ -377,7 +354,7 @@ def test_the_wallet_submenu_stops_when_packages_cannot_be_installed(monkeypatch)
     shown = []
     monkeypatch.setattr(Menu, "_wallet_cli", lambda self, **kw: shown.append(kw))
 
-    menu, _driver = menu_for("7", "0")
+    menu, _driver = menu_for("6", "0")
     menu.run()
     assert shown == [], "nothing should run without the packages"
 
@@ -392,7 +369,7 @@ def test_wallet_options_call_the_right_command(monkeypatch, key, expected):
     calls = []
     monkeypatch.setattr(Menu, "_wallet_cli", lambda self, **kw: calls.append(kw) or 0)
     # option 3 asks for confirmation before revealing the phrase
-    answers = ["7", key] + (["y"] if key == "3" else []) + ["", "0", "0"]
+    answers = ["6", key] + (["y"] if key == "3" else []) + ["", "0", "0"]
 
     menu, _driver = menu_for(*answers)
     menu.run()
@@ -406,7 +383,7 @@ def test_the_seed_phrase_is_not_shown_without_confirmation(monkeypatch):
     calls = []
     monkeypatch.setattr(Menu, "_wallet_cli", lambda self, **kw: calls.append(kw) or 0)
 
-    menu, driver = menu_for("7", "3", "n", "", "0", "0")
+    menu, driver = menu_for("6", "3", "n", "", "0", "0")
     menu.run()
 
     assert calls == [], "declining must not print the phrase"
@@ -421,7 +398,7 @@ def test_creating_a_second_wallet_warns_instead_of_replacing(monkeypatch, tmp_pa
     calls = []
     monkeypatch.setattr(Menu, "_wallet_cli", lambda self, **kw: calls.append(kw) or 0)
 
-    menu, driver = menu_for("7", "2", "", "0", "0")
+    menu, driver = menu_for("6", "2", "", "0", "0")
     menu.run()
 
     assert calls == [], "it must not create over an existing wallet"
@@ -435,7 +412,7 @@ def test_withdrawing_warns_while_positions_are_open(monkeypatch):
     calls = []
     monkeypatch.setattr(Menu, "_wallet_cli", lambda self, **kw: calls.append(kw) or 0)
 
-    menu, driver = menu_for("7", "5", "n", "", "0", "0")
+    menu, driver = menu_for("6", "5", "n", "", "0", "0")
     menu.run()
 
     assert "still holds 2 position" in driver.text

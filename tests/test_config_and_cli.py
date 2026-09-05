@@ -15,6 +15,13 @@ def test_there_is_no_trading_mode_any_more():
     assert not hasattr(cfg, "mode")
 
 
+def test_a_config_still_asking_for_a_dry_run_says_what_happened(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("dry_run: true\n")
+    with pytest.raises(ValueError, match="dry runs have been removed"):
+        load_config(str(path))
+
+
 def test_a_config_still_asking_for_paper_mode_says_what_happened(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text("mode: paper\n")
@@ -155,7 +162,7 @@ def test_trades_command_is_empty_on_a_new_database(tmp_path, capsys):
 
 
 def test_cli_flags_reach_the_engine_config(monkeypatch, capsys):
-    """`--dry-run` must survive parsing into the BotConfig."""
+    """`--db` must survive parsing into the BotConfig."""
     seen = {}
 
     class StubEngine:
@@ -171,9 +178,9 @@ def test_cli_flags_reach_the_engine_config(monkeypatch, capsys):
             return CycleReport(scanned=3, passed_filters=1, signals=1)
 
     monkeypatch.setattr(cli, "_build_engine", StubEngine)
-    assert cli.main(["--dry-run", "once"]) == 0
+    assert cli.main(["--db", ":memory:", "once"]) == 0
 
-    assert seen["config"].dry_run is True
+    assert seen["config"].state_db == ":memory:"
     assert "scanned=3" in capsys.readouterr().out
 
 
@@ -262,3 +269,12 @@ def test_the_wallet_exit_codes_are_distinct():
     """The scripts tell these apart; they must never collide with success."""
     assert cli.NO_WALLET != cli.WALLET_NOT_READY
     assert 0 not in (cli.NO_WALLET, cli.WALLET_NOT_READY)
+
+
+def test_there_is_no_dry_run_switch():
+    """The bot trades for real; there is nothing to switch off."""
+    cfg = BotConfig()
+    assert not hasattr(cfg, "dry_run")
+    parser = cli.build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--dry-run", "run"])

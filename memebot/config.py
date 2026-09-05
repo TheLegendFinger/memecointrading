@@ -155,7 +155,6 @@ class BotConfig:
     state_db: str = "data/memebot.sqlite3"
     log_file: str = "logs/memebot.log"
     log_level: str = "INFO"
-    dry_run: bool = False  # evaluate and log, never send orders
     data: DataConfig = field(default_factory=DataConfig)
     filters: FilterConfig = field(default_factory=FilterConfig)
     strategy: StrategyConfig = field(default_factory=StrategyConfig)
@@ -253,6 +252,10 @@ REMOVED_KEYS = {
     "mode": (
         "paper trading has been removed - the bot trades for real, and only for real. "
         "Delete the 'mode:' line from {path}."
+    ),
+    "dry_run": (
+        "dry runs have been removed - the bot trades for real, and only for real. "
+        "Delete the 'dry_run:' line from {path}."
     ),
 }
 

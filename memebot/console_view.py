@@ -30,7 +30,6 @@ KIND_MARKS = {
     "halt": ("HALT", YELLOW),
     "start": ("RUN ", CYAN),
     "stop": ("STOP", GREY),
-    "dry_run": ("DRY ", GREY),
     "cycle": ("    ", GREY),
 }
 
@@ -68,9 +67,8 @@ class ConsoleView:
     # ---- pieces ---------------------------------------------------------------
     def header(self, engine) -> List[str]:
         dot = self.glyphs.dot
-        label = "DRY RUN" if engine.config.dry_run else "LIVE"
-        badge = f"{label} {dot} cycle {engine.cycles} {dot} {time.strftime('%H:%M:%S')}"
-        colour = GREEN if engine.config.dry_run else YELLOW
+        badge = f"LIVE {dot} cycle {engine.cycles} {dot} {time.strftime('%H:%M:%S')}"
+        colour = YELLOW
         return [paint(box("memebot", badge, width=self.width, glyphs=self.glyphs), colour)]
 
     def summary(self, engine) -> List[str]:
@@ -168,9 +166,8 @@ class ConsoleView:
 
     def footer(self, engine) -> List[str]:
         interval = engine.config.poll_interval_seconds
-        tail = "no orders sent" if engine.config.dry_run else "real funds"
         note = (f"  next scan in ~{interval:.0f}s  {self.glyphs.dot}  Ctrl+C to stop"
-                f"  {self.glyphs.dot}  {tail}")
+                f"  {self.glyphs.dot}  real funds")
         return [paint(note, GREY)]
 
     # ---- the frame ------------------------------------------------------------

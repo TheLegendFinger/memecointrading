@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Bot state & secrets
+.env
+*.db
+*.db-journal
+*.sqlite3
+# State and logs live at the repo root; anchored so memebot/data/ is kept.
+/data/
+/logs/
+config.yaml
+config.json
+!config.example.yaml
+keypair.json
+*.key

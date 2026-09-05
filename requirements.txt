@@ -1,0 +1,6 @@
+# Core runtime (paper trading works with just these)
+requests>=2.31
+PyYAML>=6.0
+
+# Live trading on Solana (optional - only needed when mode: live)
+# Install with:  pip install -r requirements-live.txt

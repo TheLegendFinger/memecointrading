@@ -355,8 +355,18 @@ def tidy_config_file(path: Path) -> bool:
         return False
 
 
-def load_config(path: Optional[str] = None, overrides: Optional[Dict[str, Any]] = None) -> BotConfig:
-    """Build a BotConfig from an optional file, the environment, and overrides."""
+def load_config(
+    path: Optional[str] = None,
+    overrides: Optional[Dict[str, Any]] = None,
+    notes: Optional[List[str]] = None,
+) -> BotConfig:
+    """Build a BotConfig from an optional file, the environment, and overrides.
+
+    Pass a list as `notes` to hear about settings that no longer exist. Nothing
+    is printed otherwise: the cleanup is housekeeping on a file this project
+    wrote itself, and it would land in the middle of whatever the menu is
+    drawing.
+    """
     load_dotenv()
     cfg = BotConfig()
 
@@ -365,12 +375,14 @@ def load_config(path: Optional[str] = None, overrides: Optional[Dict[str, Any]] 
         if not p.exists():
             raise FileNotFoundError(f"Config file not found: {path}")
         data = _load_file(p)
-        notes = prune_removed_keys(data)
-        if notes:
+        removed = prune_removed_keys(data)
+        if removed:
             tidied = tidy_config_file(p)
             where = f"removed from {path}" if tidied else f"ignored in {path}"
-            for note in notes:
-                logger.warning("%s (%s)", note, where)
+            for note in removed:
+                logger.debug("%s (%s)", note, where)
+                if notes is not None:
+                    notes.append(f"{note} ({where})")
         _merge_into(cfg, data)
 
     for env_key, (dotted, caster) in _ENV_OVERRIDES.items():

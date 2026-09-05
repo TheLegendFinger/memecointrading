@@ -16,36 +16,47 @@ def test_there_is_no_trading_mode_any_more():
     assert not hasattr(cfg, "mode")
 
 
-def test_a_config_still_asking_for_a_dry_run_starts_anyway(tmp_path, caplog):
+def test_a_config_still_asking_for_a_dry_run_starts_anyway(tmp_path):
     """An older setup script wrote that line, so it is cleaned out, not fatal."""
     path = tmp_path / "config.yaml"
     path.write_text("dry_run: true\npoll_interval_seconds: 45\n")
-    with caplog.at_level("WARNING"):
-        cfg = load_config(str(path))
+    notes = []
+    cfg = load_config(str(path), notes=notes)
     assert cfg.poll_interval_seconds == 45
-    assert "dry runs are gone" in caplog.text
+    assert any("dry runs are gone" in n for n in notes)
     assert "dry_run" not in path.read_text(), "and it never complains twice"
 
 
-def test_a_config_still_asking_for_paper_mode_starts_anyway(tmp_path, caplog):
+def test_the_cleanup_says_nothing_unless_it_is_asked(tmp_path, capsys, caplog):
+    """It would land in the middle of whatever the menu is drawing."""
+    path = tmp_path / "config.yaml"
+    path.write_text("dry_run: true\nmode: paper\nrisk:\n  starting_cash_usd: 100\n")
+    with caplog.at_level("INFO"):
+        load_config(str(path))
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""
+    assert caplog.text == ""
+
+
+def test_a_config_still_asking_for_paper_mode_starts_anyway(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text("mode: paper\nlog_level: DEBUG\n")
-    with caplog.at_level("WARNING"):
-        cfg = load_config(str(path))
+    notes = []
+    cfg = load_config(str(path), notes=notes)
     assert cfg.log_level == "DEBUG"
-    assert "paper trading is gone" in caplog.text
+    assert any("paper trading is gone" in n for n in notes)
     assert "mode" not in path.read_text()
 
 
-def test_a_config_with_the_old_simulator_settings_starts_anyway(tmp_path, caplog):
+def test_a_config_with_the_old_simulator_settings_starts_anyway(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text(
         "execution:\n  paper_failure_rate: 0.02\n  slippage_bps: 150\n"
     )
-    with caplog.at_level("WARNING"):
-        cfg = load_config(str(path))
+    notes = []
+    cfg = load_config(str(path), notes=notes)
     assert cfg.execution.slippage_bps == 150, "the settings around it survive"
-    assert "paper trading simulator" in caplog.text
+    assert any("paper trading simulator" in n for n in notes)
     assert "paper_failure_rate" not in path.read_text()
 
 
@@ -109,7 +120,7 @@ def test_the_config_the_old_setup_script_wrote_still_runs(tmp_path):
     assert path.read_text() == cleaned, "and it settles after one pass"
 
 
-def test_a_config_that_cannot_be_rewritten_still_loads(tmp_path, monkeypatch, caplog):
+def test_a_config_that_cannot_be_rewritten_still_loads(tmp_path, monkeypatch):
     """A read-only deploy cannot be tidied; the stale keys are ignored anyway."""
     path = tmp_path / "config.yaml"
     path.write_text("dry_run: true\npoll_interval_seconds: 45\n")
@@ -118,10 +129,10 @@ def test_a_config_that_cannot_be_rewritten_still_loads(tmp_path, monkeypatch, ca
         raise OSError("read-only file system")
 
     monkeypatch.setattr(Path, "write_text", refuse)
-    with caplog.at_level("WARNING"):
-        cfg = load_config(str(path))
+    notes = []
+    cfg = load_config(str(path), notes=notes)
     assert cfg.poll_interval_seconds == 45
-    assert "ignored in" in caplog.text
+    assert any("ignored in" in n for n in notes)
     assert path.read_text().startswith("dry_run: true")
 
 
@@ -173,14 +184,14 @@ def test_explicit_overrides_beat_the_environment(tmp_path, monkeypatch):
     assert cfg.risk.max_open_positions == 2
 
 
-def test_a_config_still_setting_a_bankroll_starts_anyway(tmp_path, caplog):
+def test_a_config_still_setting_a_bankroll_starts_anyway(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text("risk:\n  starting_cash_usd: 1000\n  max_open_positions: 2\n")
-    with caplog.at_level("WARNING"):
-        cfg = load_config(str(path))
+    notes = []
+    cfg = load_config(str(path), notes=notes)
     assert cfg.risk.max_open_positions == 2
     assert not hasattr(cfg.risk, "starting_cash_usd")
-    assert "wallet is the bankroll" in caplog.text
+    assert any("wallet is the bankroll" in n for n in notes)
 
 
 @pytest.mark.parametrize(

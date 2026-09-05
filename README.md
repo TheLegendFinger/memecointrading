@@ -37,7 +37,7 @@ time, then opens a menu — everything is a number:
 ```
   ╋╋╋╋╋╋╋╋╋╋┏┓╋╋┏┓
   ┏━━┳━┳━━┳━┫┗┳━┫┗┓
-  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.2.0
+  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.2.1
   ┗┻┻┻━┻┻┻┻━┻━┻━┻━┛   LIVE - real money
 
    $1,043.18 · $812.40 cash · 2 open · +4.32%
@@ -186,7 +186,7 @@ change anything — there is no wallet key in the deployment at all.
 | `trades` | Recent fills with fees, slippage and realized P&L. |
 | `liquidate` | Close every open position at market. |
 | `reset` | Wipe the bot's trade history. Moves no funds. |
-| `config` | Print the effective configuration after file + env + flags. |
+| `config` | Print the effective configuration after file + env + flags. `--reset` restores the recommended `config.yaml`. |
 
 Global flags: `--config`, `--db`, `--log-level`. `--db` takes a SQLite path
 *or* a `postgresql://` URL.
@@ -364,6 +364,12 @@ Worth tuning first:
 | `filters.min_liquidity_usd` | `25000` | The single most effective rug filter. |
 | `filters.min_age_minutes` | `20` | Lower to catch launches earlier, at much higher risk. |
 | `execution.slippage_bps` | `150` | Too low and orders revert; too high and you get sandwiched. |
+
+`config.yaml` is your copy of `config.example.yaml`, and while you have not
+edited it, it is kept in step with the recommended settings automatically -
+otherwise an improved default would never reach anyone who had already run
+setup. The moment you change a single value it is yours and is left alone.
+`python -m memebot config --reset` puts the recommended settings back.
 
 If `doctor` reports plenty of pairs but nothing tradable it names the score
 that would have worked, so you can decide between lowering `strategy.min_score`

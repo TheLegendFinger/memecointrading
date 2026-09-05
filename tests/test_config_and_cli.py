@@ -381,3 +381,97 @@ def test_there_is_no_dry_run_switch():
     parser = cli.build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args(["--dry-run", "run"])
+
+
+# ---- an old config nobody edited -----------------------------------------------
+def _write_example_and_config(tmp_path, monkeypatch, config_body, example_body):
+    """A fake install: an example next to the package, a config.yaml beside it."""
+    example = tmp_path / "config.example.yaml"
+    example.write_text(example_body)
+    monkeypatch.setattr("memebot.config.example_config_path", lambda: example)
+    path = tmp_path / "config.yaml"
+    path.write_text(config_body)
+    return path
+
+
+NARROW = """data:
+  search_terms: ["SOL", "WSOL", "pump", "bonk"]
+  max_candidates: 120
+strategy:
+  min_score: 0.62
+"""
+
+WIDE = """data:
+  search_terms: ["SOL", "WSOL", "pump", "bonk", "wif", "cat", "dog"]
+  max_candidates: 400
+strategy:
+  min_score: 0.55
+"""
+
+
+def test_an_untouched_copy_of_an_old_example_is_refreshed(tmp_path, monkeypatch):
+    """Otherwise better defaults reach nobody who already ran setup."""
+    from memebot.config import settings_fingerprint
+    import yaml
+
+    monkeypatch.setattr(
+        "memebot.config.LEGACY_EXAMPLE_FINGERPRINTS",
+        {settings_fingerprint(yaml.safe_load(NARROW))},
+    )
+    path = _write_example_and_config(tmp_path, monkeypatch, NARROW, WIDE)
+
+    notes = []
+    cfg = load_config(str(path), notes=notes)
+
+    assert cfg.data.max_candidates == 400
+    assert len(cfg.data.search_terms) == 7
+    assert cfg.strategy.min_score == 0.55
+    assert any("untouched copy" in n for n in notes)
+    assert path.read_text() == WIDE, "and the file itself moves on"
+
+
+def test_a_config_the_user_edited_is_never_touched(tmp_path, monkeypatch):
+    """One changed value and it is their file, not ours."""
+    from memebot.config import settings_fingerprint
+    import yaml
+
+    monkeypatch.setattr(
+        "memebot.config.LEGACY_EXAMPLE_FINGERPRINTS",
+        {settings_fingerprint(yaml.safe_load(NARROW))},
+    )
+    edited = NARROW.replace("min_score: 0.62", "min_score: 0.71")
+    path = _write_example_and_config(tmp_path, monkeypatch, edited, WIDE)
+
+    notes = []
+    cfg = load_config(str(path), notes=notes)
+
+    assert cfg.strategy.min_score == 0.71
+    assert cfg.data.max_candidates == 120, "their narrow scan is their choice"
+    assert notes == []
+    assert path.read_text() == edited
+
+
+def test_the_shipped_example_is_not_itself_treated_as_stale():
+    """A fingerprint left in the legacy set after an edit would loop forever."""
+    from memebot.config import (
+        LEGACY_EXAMPLE_FINGERPRINTS, _load_file, example_config_path,
+        prune_removed_keys, settings_fingerprint,
+    )
+
+    example = example_config_path()
+    assert example is not None, "the example ships with the package"
+    data = _load_file(example)
+    prune_removed_keys(data)
+    assert settings_fingerprint(data) not in LEGACY_EXAMPLE_FINGERPRINTS
+
+
+def test_config_reset_restores_the_recommended_settings(tmp_path, monkeypatch, capsys):
+    example = tmp_path / "config.example.yaml"
+    example.write_text(WIDE)
+    monkeypatch.setattr("memebot.config.example_config_path", lambda: example)
+    path = tmp_path / "config.yaml"
+    path.write_text(NARROW.replace("min_score: 0.62", "min_score: 0.71"))
+
+    assert cli.main(["--config", str(path), "config", "--reset"]) == 0
+    assert path.read_text() == WIDE
+    assert "reset to the recommended settings" in capsys.readouterr().out

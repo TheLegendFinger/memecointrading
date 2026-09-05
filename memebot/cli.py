@@ -12,6 +12,7 @@ import json
 import sys
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from . import __version__
@@ -551,7 +552,32 @@ def cmd_reset(args: argparse.Namespace, config: BotConfig) -> int:
 
 
 def cmd_config(args: argparse.Namespace, config: BotConfig) -> int:
+    if getattr(args, "reset", False):
+        return _reset_config(args.config)
     print(json.dumps(config.to_dict(), indent=2, default=str))
+    return 0
+
+
+def _reset_config(path: Optional[str]) -> int:
+    """Put the recommended settings back, for a config that has been tuned into
+    a corner. An untouched one is refreshed automatically at load."""
+    from .config import example_config_path
+
+    example = example_config_path()
+    if example is None:
+        print("config.example.yaml is not next to the package - nothing to copy.",
+              file=sys.stderr)
+        return 2
+    target = Path(path or "config.yaml")
+    if target.resolve() == example.resolve():
+        print("That is the example itself; nothing to do.", file=sys.stderr)
+        return 2
+    try:
+        target.write_text(example.read_text())
+    except OSError as exc:
+        print(f"Could not write {target}: {exc}", file=sys.stderr)
+        return 2
+    print(f"{target} reset to the recommended settings.")
     return 0
 
 
@@ -561,7 +587,7 @@ def cmd_config(args: argparse.Namespace, config: BotConfig) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="memebot",
-        description="A Solana memecoin trading bot. Paper trading by default.",
+        description="A Solana memecoin trading bot. It trades real money.",
     )
     parser.add_argument("--version", action="version", version=f"memebot {__version__}")
     parser.add_argument("-c", "--config", help="path to a YAML or JSON config file")
@@ -629,6 +655,8 @@ def build_parser() -> argparse.ArgumentParser:
     reset.set_defaults(func=cmd_reset)
 
     show = sub.add_parser("config", help="print the effective configuration")
+    show.add_argument("--reset", action="store_true",
+                      help="overwrite config.yaml with the recommended settings")
     show.set_defaults(func=cmd_config)
 
     return parser

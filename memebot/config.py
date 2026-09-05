@@ -9,6 +9,7 @@ Precedence (highest first):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -21,6 +22,8 @@ from .models import USDC_MINT, WSOL_MINT
 from .storage import resolve_state_target
 
 logger = logging.getLogger(__name__)
+
+EXAMPLE_NAME = "config.example.yaml"
 
 
 @dataclass
@@ -338,6 +341,65 @@ def _yaml_without_removed_keys(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", "".join(out))
 
 
+# The canonical settings of every config.example.yaml this project has shipped,
+# fingerprinted after the removed keys above are dropped. A config.yaml that
+# still matches one of these is a copy of an old default that nobody has
+# touched - the setup script wrote it and moved on - so it can be refreshed
+# from the current example without destroying anyone's tuning. One edited value
+# and the fingerprint no longer matches, which is the point.
+#
+# To add one when the example changes, from a checkout:
+#   python -c "import hashlib,json,yaml;from memebot.config import prune_removed_keys;\
+#   d=yaml.safe_load(open('config.example.yaml'));prune_removed_keys(d);\
+#   print(hashlib.sha256(json.dumps(d,sort_keys=True,default=str).encode()).hexdigest())"
+LEGACY_EXAMPLE_FINGERPRINTS = {
+    "8cbb2168da7e9bced3083dde653bb09802091b88cf825a3cb9c5f5e1488e607a",
+    "bc64b2b232ff3861f4cd3e0e3b3c620dee73701ba82ed5cf6b0b8dc98d95f75c",
+    "b4d080ed648a6ce1bc037703544d15c47717281a1dc535fe889d22da3be81370",
+    "0b419c4f22474a8eb5e7719ae86ca77c6e2df8ecf870383639112878fd77cb49",
+    "0ed372b12dbc45abdf7e00781dba0abdace679bc44c4c83ee7400d2dad295693",
+}
+
+
+def settings_fingerprint(data: Dict[str, Any]) -> str:
+    """A stable hash of a config's settings, ignoring comments and layout."""
+    return hashlib.sha256(
+        json.dumps(data, sort_keys=True, default=str).encode()
+    ).hexdigest()
+
+
+def example_config_path() -> Optional[Path]:
+    """The config.example.yaml shipped alongside this package, if it is there."""
+    for candidate in (Path(__file__).resolve().parent.parent / EXAMPLE_NAME,
+                      Path(EXAMPLE_NAME)):
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def refresh_if_untouched_example(path: Path, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Replace a config that is an old example nobody edited. None if it isn't.
+
+    Without this, improving the defaults does nothing for anyone who already
+    ran setup: their config.yaml keeps overriding them with values they never
+    chose, and the only fix is to know to delete a file.
+    """
+    if settings_fingerprint(data) not in LEGACY_EXAMPLE_FINGERPRINTS:
+        return None
+    example = example_config_path()
+    if example is None or example.resolve() == path.resolve():
+        return None
+    fresh = _load_file(example)
+    prune_removed_keys(fresh)
+    if settings_fingerprint(fresh) == settings_fingerprint(data):
+        return None  # already current
+    try:
+        path.write_text(example.read_text())
+    except OSError:
+        return fresh  # cannot save it, but still start with the better settings
+    return fresh
+
+
 def tidy_config_file(path: Path) -> bool:
     """Rewrite `path` without the removed settings. False if it could not be."""
     try:
@@ -383,6 +445,13 @@ def load_config(
                 logger.debug("%s (%s)", note, where)
                 if notes is not None:
                     notes.append(f"{note} ({where})")
+        fresh = refresh_if_untouched_example(p, data)
+        if fresh is not None:
+            data = fresh
+            note = f"{path} was an untouched copy of an older default - refreshed"
+            logger.debug("%s", note)
+            if notes is not None:
+                notes.append(note)
         _merge_into(cfg, data)
 
     for env_key, (dotted, caster) in _ENV_OVERRIDES.items():

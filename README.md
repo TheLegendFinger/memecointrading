@@ -5,60 +5,233 @@ out the obvious traps, scores what is left on a momentum/volume model, sizes
 positions against your bankroll, and manages exits with stops, trailing stops
 and time limits.
 
-**It runs in paper mode by default** — fills are simulated locally and no funds
-move. The live path is fully implemented: flip `mode: live`, arm the safety
-interlock, and the same pipeline signs real swaps through the
-[Jupiter](https://station.jup.ag/) aggregator and broadcasts them to mainnet.
+**It paper trades the real Solana market by default** — live DexScreener prices,
+live liquidity, live order flow, real Jupiter routes — with fills simulated
+locally so no funds move. The live path is fully implemented: flip `mode: live`,
+arm the safety interlock, and the same pipeline signs real swaps through the
+[Jupiter](https://station.jup.ag/) aggregator.
+
+It ships with a web dashboard you can deploy to Vercel in a couple of minutes.
 
 ---
 
-## Quick start (paper trading)
+## Quick start on Windows
 
-```bash
+```powershell
 git clone https://github.com/TheLegendFinger/memecointrading.git
 cd memecointrading
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-
-cp config.example.yaml config.yaml     # optional; defaults are sane
-
-python scripts/demo_session.py         # watch a full session on a fake market
-python -m memebot scan                 # what does the bot see right now?
-python -m memebot once --dry-run       # one cycle, decisions logged, no trades
-python -m memebot run --config config.yaml
+powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
 ```
 
-`demo_session.py` needs no network at all — it drives the real engine against a
-synthetic market so you can see entries, stops, liquidity-drain exits and the
-fee model working before pointing anything at mainnet.
+That creates a virtual environment, installs everything, and copies
+`config.example.yaml` to `config.yaml`. Then:
 
-Then, in another shell:
+```powershell
+scripts\doctor.bat        REM are the live market feeds reachable?
+scripts\run.bat           REM start paper trading the real market
+scripts\dashboard.bat     REM open the dashboard at localhost:8000
+```
+
+Run `run.bat` in one terminal and `dashboard.bat` in another to watch it work.
+
+<details>
+<summary>macOS / Linux</summary>
 
 ```bash
-python -m memebot status               # equity, open positions, win rate
-python -m memebot trades               # trade log
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp config.example.yaml config.yaml
+
+python -m memebot doctor        # check the live feeds
+python -m memebot run --config config.yaml
+python scripts/dev_server.py    # dashboard at localhost:8000
 ```
+</details>
+
+**Start with `doctor`.** It pings DexScreener and Jupiter, runs the full
+discovery → filter → score funnel against the live market, and tells you exactly
+what is or isn't working:
+
+```
+  [PASS] dexscreener search       231ms  184 solana pairs; e.g. WIF at $1.9042
+  [PASS] dexscreener boosts       142ms  10 boosted token(s)
+  [PASS] jupiter price            180ms  SOL = $198.44
+  [PASS] jupiter routing          301ms  0.1 SOL routes to 19.81 USDC via Whirlpool (impact 0.004%)
+  [PASS] candidate pipeline      2914ms  118 scanned -> 24 passed filters -> 3 above min_score 0.55
+```
+
+If the pipeline line says *"filters are rejecting everything"* or *"best score
+was 0.41; lower min_score to trade"*, that is a tuning problem, not a bug — see
+[Configuration](#configuration).
+
+---
+
+## Where to actually run this
+
+**A trading bot needs to run continuously. Vercel cannot do that** — its
+functions are short-lived (10–60s), it has no persistent disk, and on the Hobby
+plan its cron jobs fire **once per day**. Deploying the repo to Vercel gets you a
+first-class dashboard and an on-demand `/api/cycle` endpoint; it does not get you
+a bot that trades every 30 seconds.
+
+So pick a setup:
+
+| Setup | Trading runs on | Costs | Cycle interval | Good for |
+| --- | --- | --- | --- | --- |
+| **A. Local + Vercel dashboard** *(recommended)* | your Windows PC | free | 30s, whatever you set | Watching it properly. Your PC has to be on. |
+| **B. GitHub Actions + Vercel dashboard** | GitHub's runners | free | ~10 min, often late | No PC required, no card on file. |
+| **C. All-Vercel** | Vercel Cron | needs **Pro** ($20/mo) | 1/min on Pro, **1/day on Hobby** | Everything in one place. |
+| **D. Local only** | your PC | free | 30s | Trying it out. No cloud account at all. |
+
+All four run the same bot with the same code. They differ only in what triggers
+a cycle and where the state lives.
+
+### D — Local only (no cloud, start here)
+
+Nothing to configure. `scripts\run.bat` keeps state in `data/memebot.sqlite3`,
+and `scripts\dashboard.bat` serves the dashboard from that same file.
+
+### A — Your PC trades, Vercel shows the dashboard
+
+The PC runs the loop; Vercel serves a dashboard you can open from your phone.
+They share one Postgres database.
+
+1. **Create a free Postgres database.** [Neon](https://neon.tech) or
+   [Supabase](https://supabase.com) both have a free tier that is plenty. Copy
+   the connection string (`postgresql://user:pass@host/db`).
+
+2. **Point the bot at it.** Add this line to `.env` in the project folder:
+
+   ```
+   DATABASE_URL=postgresql://user:pass@host/dbname
+   ```
+
+   Verify with `python -m memebot doctor` — the state line should now say
+   `postgres (...)` rather than `sqlite`.
+
+3. **Deploy the dashboard** — see [Deploying to Vercel](#deploying-to-vercel)
+   below, and set the same `DATABASE_URL` there.
+
+4. **Run the bot** with `scripts\run.bat`. Trades appear on the Vercel dashboard
+   within seconds.
+
+To keep it running after you log out, use Task Scheduler:
+
+```
+Task Scheduler > Create Task
+  General : "memebot", tick "Run whether user is logged on or not"
+  Triggers: At startup  (+ tick "Repeat task every 5 minutes" as a restart net)
+  Actions : Start a program
+            Program : C:\path\to\memecointrading\scripts\run.bat
+            Start in: C:\path\to\memecointrading
+  Settings: untick "Stop the task if it runs longer than..."
+```
+
+The bot is safe to kill and restart at any time — its state lives in the
+database, not in memory.
+
+### B — GitHub Actions trades, Vercel shows the dashboard
+
+No PC required. `.github/workflows/trade.yml` runs a cycle every 10 minutes on
+GitHub's runners, for free.
+
+1. Create the Postgres database as above.
+2. Repo **Settings → Secrets and variables → Actions → New repository secret**:
+   `DATABASE_URL` = your connection string.
+3. Enable Actions on the repo. The schedule takes it from there, and
+   **Actions → trading cycle → Run workflow** triggers one by hand.
+4. Deploy the dashboard with the same `DATABASE_URL`.
+
+GitHub's minimum interval is 5 minutes and scheduled runs are queued rather than
+punctual, so expect ~10–15 minutes between cycles in practice. Keep this one on
+paper mode — a repository secret is not the place for a wallet key.
+
+### C — Everything on Vercel
+
+Deploy as below, then set the cron in `vercel.json`. It ships with a **daily**
+schedule because that is Hobby's limit:
+
+```json
+"crons": [{ "path": "/api/cycle", "schedule": "0 12 * * *" }]
+```
+
+On Pro, change it to `*/1 * * * *` for a cycle every minute. On Hobby, leave it —
+and understand that one cycle a day is a demonstration, not a trading strategy.
+
+---
+
+## Deploying to Vercel
+
+The repo is a working Vercel project as-is: a static dashboard in `public/` and
+Python serverless functions in `api/`.
+
+1. **Import the repo** at [vercel.com/new](https://vercel.com/new). Framework
+   preset: **Other**. No build command, no output directory — `vercel.json`
+   covers it.
+
+2. **Add environment variables** (Project → Settings → Environment Variables):
+
+   | Name | Value | Why |
+   | --- | --- | --- |
+   | `POSTGRES_URL` *or* `DATABASE_URL` | your Postgres connection string | **Required.** Serverless has no disk; without this every trade is discarded. |
+   | `CRON_SECRET` | any long random string | Required to call `/api/cycle`. Without it that endpoint refuses everything. |
+   | `MEMEBOT_MODE` | `paper` | Explicit is better. |
+   | `MEMEBOT_STARTING_CASH` | `1000` | Paper bankroll. |
+
+   If you add Vercel's own Postgres integration it sets `POSTGRES_URL` for you.
+
+3. **Deploy**, then open `/api/health` — it runs the same checks as `doctor` and
+   reports what the deployment can reach.
+
+The dashboard is public once deployed. It shows your equity, positions and
+trades to anyone with the URL, so treat the URL as private (or put Vercel
+Authentication in front of the project). `/api/cycle` is the only endpoint that
+changes anything, and it needs the `CRON_SECRET` bearer token:
+
+```bash
+curl -X POST "https://your-app.vercel.app/api/cycle?key=YOUR_CRON_SECRET"
+```
+
+### What the deployment serves
+
+| Route | What it does |
+| --- | --- |
+| `/` | The dashboard: equity chart, open positions, trade log, live market scan. |
+| `/api/status` | Portfolio summary as JSON. |
+| `/api/positions` | Open positions. |
+| `/api/trades?limit=50` | Trade history. |
+| `/api/equity?limit=300` | Equity curve points. |
+| `/api/scan?limit=25` | Live scored candidates — read-only, never trades. |
+| `/api/health` | Connectivity and configuration diagnostics. |
+| `/api/cycle` | **Protected.** Runs one trading cycle. |
+
+---
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `run` | The trading loop. `--cycles N` to stop after N passes, `--interval S` to change the cadence. |
-| `once` | A single cycle, then exit. Good for cron and for testing config changes. |
-| `scan` | Score the current market and print the table — never trades. |
-| `status` | Portfolio summary (`--json` for machine-readable output). |
+| `doctor` | Check every API, the database, and the candidate funnel. Start here. |
+| `run` | The trading loop. `--cycles N` to stop after N passes, `--interval S` for the cadence. |
+| `once` | A single cycle, then exit. Good for cron. |
+| `scan` | Score the live market and print the table — never trades. |
+| `status` | Portfolio summary (`--json` for scripts). |
 | `trades` | Recent fills with fees, slippage and realized P&L. |
 | `liquidate` | Close every open position at market. |
 | `reset` | Wipe paper state and start the bankroll over (refuses in live mode). |
 | `config` | Print the effective configuration after file + env + flags. |
 
 Global flags: `--config`, `--mode {paper,live}`, `--db`, `--log-level`,
-`--dry-run`.
+`--dry-run`. `--db` takes a SQLite path *or* a `postgresql://` URL.
+
+`python scripts/dev_server.py` serves the dashboard locally, and
+`python scripts/demo_session.py` runs a full session against a synthetic market
+with no network at all — useful for seeing the machinery work end to end.
 
 ## How a cycle works
 
 ```
-       DexScreener search + boost feed
+   DexScreener: search + boost leaderboards + newest token profiles
                     │
                     ▼
         [1] discover ~120 candidate pairs
@@ -84,13 +257,10 @@ Global flags: `--config`, `--mode {paper,live}`, `--db`, `--log-level`,
             liquidity-drain exit · stale-data exit · momentum reversal
 ```
 
-Everything is persisted to SQLite (`data/memebot.sqlite3`), so stopping and
-restarting the bot resumes the same book.
-
 ## The paper fill model
 
-Paper mode is not "assume you get the mid price" — that flatters a strategy
-into looking profitable when it isn't. Each simulated swap applies:
+Paper mode is not "assume you get the mid price" — that flatters a strategy into
+looking profitable when it isn't. Each simulated swap applies:
 
 * **price impact** from a constant-product curve using the pool's real
   liquidity (a $500 order into a $50k pool costs ~2%, not 0),
@@ -100,9 +270,10 @@ into looking profitable when it isn't. Each simulated swap applies:
 * **reverts** when modelled slippage exceeds the order's tolerance — exactly
   what the on-chain minimum-out check does.
 
-Set `execution.paper_use_live_quotes: true` to price paper fills off real
-Jupiter routes instead of the built-in curve, and
-`execution.paper_random_seed` for reproducible runs.
+Set `execution.paper_use_live_quotes: true` to price paper fills off **real
+Jupiter routes** instead of the built-in curve — the most realistic setting, at
+the cost of two extra API calls per order. Set `execution.paper_random_seed` for
+reproducible runs.
 
 ## Going live
 
@@ -110,48 +281,26 @@ Jupiter routes instead of the built-in curve, and
 > do faster than you will. Use a burner wallet funded with an amount you are
 > prepared to lose entirely, and watch the first sessions.
 
-1. Install the Solana extras:
+1. Install the Solana extras: `pip install -r requirements-live.txt`
+2. Put a wallet key in `.env` — either `SOLANA_PRIVATE_KEY` (base58) or
+   `SOLANA_KEYPAIR_PATH` (a Solana CLI JSON keypair). Fund it with SOL.
+3. Arm the interlock — separate from the config on purpose:
+   `LIVE_TRADING_CONFIRM=I_UNDERSTAND_THE_RISK`
+4. Use a private RPC; the public endpoint drops transactions under load:
+   `MEMEBOT_RPC_URL=https://mainnet.helius-rpc.com/?api-key=...`
+5. `python -m memebot doctor --mode live` — it verifies the key, the balance and
+   the RPC before you risk anything.
+6. `python -m memebot run --mode live --config config.yaml`. The CLI prints the
+   wallet, the RPC and the size limits, then asks you to type `trade`.
 
-   ```bash
-   pip install -r requirements-live.txt
-   ```
+Per order, live mode requests a Jupiter route → rejects it if price impact
+exceeds tolerance → builds the swap → signs locally (your key never leaves the
+machine) → sends it → polls to confirmation → books the **actual settled
+balances** from the confirmed transaction rather than the quote's estimate.
 
-2. Put a wallet key in `.env` (copy from `.env.example`) — either
-   `SOLANA_PRIVATE_KEY` (base58) or `SOLANA_KEYPAIR_PATH` (a Solana CLI JSON
-   keypair). Fund it with SOL: your trading capital plus a little for fees.
-
-3. Arm the interlock. This is separate from the config on purpose — nothing
-   trades for real without it:
-
-   ```bash
-   echo 'LIVE_TRADING_CONFIRM=I_UNDERSTAND_THE_RISK' >> .env
-   ```
-
-4. Use a private RPC. The public endpoint drops transactions under load:
-
-   ```bash
-   echo 'MEMEBOT_RPC_URL=https://mainnet.helius-rpc.com/?api-key=...' >> .env
-   ```
-
-5. Start small and watch it:
-
-   ```bash
-   python -m memebot run --mode live --config config.yaml
-   ```
-
-   The CLI prints the wallet, the RPC and the size limits, then asks you to
-   type `trade` before the first order.
-
-What live mode does per order: request a Jupiter route → reject it if price
-impact exceeds your tolerance → build the swap transaction → sign it locally
-(your key never leaves the machine) → send it → poll until confirmed → read the
-**actual settled balances** from the confirmed transaction and book those, not
-the quote's estimate. Failures are returned as unfilled orders and logged; they
-never corrupt the position book.
-
-Live mode reads your bankroll from config the same way paper does, so set
-`risk.max_position_usd` and `risk.max_open_positions` to what your wallet can
-actually cover.
+**Run live trading on your own machine, not on Vercel or GitHub Actions.** A
+wallet key in a cloud environment variable is a wallet key you have handed to a
+platform, and a cycle that times out mid-swap is a position you did not intend.
 
 ## Configuration
 
@@ -159,64 +308,75 @@ actually cover.
 **CLI flags > environment (`MEMEBOT_*`) > config file > defaults**, and unknown
 keys are rejected at startup rather than silently ignored.
 
-The settings worth tuning first:
+Worth tuning first:
 
 | Setting | Default | Why you would change it |
 | --- | --- | --- |
-| `strategy.min_score` | `0.55` | Raise for fewer, higher-conviction entries; lower to trade more. |
+| `strategy.min_score` | `0.55` | The main dial. Raise for fewer, higher-conviction entries; lower to trade more. |
 | `risk.position_size_pct` | `0.08` | Fraction of equity per position. |
-| `risk.stop_loss_pct` | `0.20` | Memecoins are volatile; too tight and you get stopped out of every winner. |
+| `risk.stop_loss_pct` | `0.20` | Too tight and you get stopped out of every winner. |
 | `filters.min_liquidity_usd` | `25000` | The single most effective rug filter. |
 | `filters.min_age_minutes` | `20` | Lower to catch launches earlier, at much higher risk. |
 | `execution.slippage_bps` | `150` | Too low and orders revert; too high and you get sandwiched. |
+
+If `doctor` reports plenty of pairs but nothing tradable, loosen
+`strategy.min_score` first, then `filters.min_volume_h1_usd`.
 
 ## Development
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest -q          # 145 tests, no network access required
+python -m pytest -q          # 191 tests, no network access required
 ```
 
-The test suite fakes DexScreener, Jupiter and the Solana RPC, so it runs
+The suite fakes DexScreener, Jupiter, the Solana RPC and Postgres, so it runs
 offline and deterministically. It covers the fill model, portfolio accounting
 (including partial exits and cost basis), every risk rule, the filters, the
-scoring model, full engine cycles, and the live executor's safety envelope.
-
-Layout:
+scoring model, full engine cycles, the serverless handlers (including that
+`/api/cycle` fails closed without a secret), the storage dialects, and the live
+executor's safety envelope.
 
 ```
 memebot/
   config.py        dataclass config + file/env/flag merging and validation
   models.py        Token, PairSnapshot, Signal, Order, Fill, Position
   http.py          retrying, rate-limited HTTP client
-  storage.py       SQLite schema and queries
+  storage.py       SQLite + Postgres behind one interface
   portfolio.py     cash, positions, cost basis, P&L
   risk.py          sizing, entry gates, circuit breakers, exit rules
   engine.py        the cycle
+  doctor.py        dependency and configuration diagnostics
   cli.py           command line interface
   data/            dexscreener.py (discovery/prices), jupiter.py (routing)
   execution/       base.py (interface), paper.py (simulator), live.py (Jupiter)
   strategy/        filters.py (safety gates), momentum.py (scoring)
+api/               Vercel serverless functions (status, trades, cycle, scan…)
+public/            the dashboard
+scripts/           Windows setup/run scripts, dev server, offline demo
 ```
 
 Adding a strategy: subclass `Strategy`, implement `score` and
-`generate_entries`, register it in `memebot/strategy/__init__.py`, then select
-it with `strategy.name` in the config.
+`generate_entries`, register it in `memebot/strategy/__init__.py`, then select it
+with `strategy.name` in the config.
 
 ## Limitations, honestly
 
 * The momentum model is a reasonable starting point, **not** a proven edge. It
-  has not been backtested against historical data — paper trade it long enough
-  to form your own view before risking anything.
+  has not been backtested against historical data — paper trade it long enough to
+  form your own view before risking anything.
 * Discovery depends on DexScreener's free API. When it rate limits or lags, the
-  bot sees a stale market.
+  bot sees a stale market. `doctor` will tell you when that is happening.
 * There is no honeypot/mint-authority check yet. The liquidity, age and
   liquidity-to-FDV filters catch a lot, but not a token that simply disables
   selling. Adding a token-security API call in `strategy/filters.py` is the
   highest-value next step.
-* Live mode does not currently split large orders or retry a failed swap at a
-  wider tolerance; an order that reverts is simply skipped until the next cycle.
+* Live mode does not split large orders or retry a failed swap at a wider
+  tolerance; an order that reverts is skipped until the next cycle.
+* Third-party endpoints move. If Jupiter or DexScreener change a URL, `doctor`
+  will say so and `data.jupiter_price_url` / `data.dexscreener_base_url` in the
+  config are how you point at the new one.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE). Nothing here is financial advice, and running this
+in live mode can lose every dollar in the connected wallet.

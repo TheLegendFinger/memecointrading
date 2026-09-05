@@ -1,8 +1,22 @@
-"""SQLite persistence so the bot can be stopped and resumed without losing state."""
+"""Persistence.
+
+The same schema and queries run on two backends:
+
+  * **SQLite** - the default, a single file next to the bot. Perfect when the
+    bot runs on your own machine.
+  * **Postgres** - for deployments where the filesystem is ephemeral (Vercel,
+    Fly, containers) or where a local bot and a hosted dashboard need to read
+    the same book.
+
+Which one you get is decided by `state_db`: anything starting with
+`postgres://` or `postgresql://` opens Postgres, everything else is a SQLite
+path. Only the dialect differs - the queries below are written once.
+"""
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 import time
@@ -10,79 +24,173 @@ from typing import Any, Dict, List, Optional
 
 from .models import Fill, Position, Token
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS trades (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts            REAL    NOT NULL,
-    client_id     TEXT,
-    side          TEXT    NOT NULL,
-    token_address TEXT    NOT NULL,
-    symbol        TEXT,
-    price         REAL    NOT NULL,
-    token_amount  REAL    NOT NULL,
-    usd_amount    REAL    NOT NULL,
-    fee_usd       REAL    NOT NULL DEFAULT 0,
-    slippage_bps  REAL    NOT NULL DEFAULT 0,
-    realized_pnl  REAL    NOT NULL DEFAULT 0,
-    tx_signature  TEXT,
-    reason        TEXT,
-    mode          TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_trades_ts ON trades(ts);
-CREATE INDEX IF NOT EXISTS idx_trades_token ON trades(token_address);
-
-CREATE TABLE IF NOT EXISTS positions (
-    token_address       TEXT PRIMARY KEY,
-    symbol              TEXT,
-    name                TEXT,
-    decimals            INTEGER DEFAULT 9,
-    pair_address        TEXT,
-    quantity            REAL NOT NULL,
-    avg_price           REAL NOT NULL,
-    cost_usd            REAL NOT NULL,
-    opened_at           REAL NOT NULL,
-    last_price          REAL NOT NULL DEFAULT 0,
-    high_price          REAL NOT NULL DEFAULT 0,
-    fees_usd            REAL NOT NULL DEFAULT 0,
-    realized_pnl_usd    REAL NOT NULL DEFAULT 0,
-    peak_liquidity_usd  REAL NOT NULL DEFAULT 0,
-    last_seen_at        REAL NOT NULL DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS state (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS equity (
-    ts        REAL PRIMARY KEY,
-    cash      REAL NOT NULL,
-    positions REAL NOT NULL,
-    equity    REAL NOT NULL
-);
-"""
+log = logging.getLogger(__name__)
 
 
+# --------------------------------------------------------------------------------
+# dialects
+# --------------------------------------------------------------------------------
+class _Dialect:
+    """The handful of things SQL engines disagree about."""
+
+    name = "sqlite"
+    placeholder = "?"
+    serial_pk = "INTEGER PRIMARY KEY AUTOINCREMENT"
+    real = "REAL"
+    text = "TEXT"
+    integer = "INTEGER"
+    needs_commit = True
+
+    def adapt(self, sql: str) -> str:
+        return sql
+
+
+class _PostgresDialect(_Dialect):
+    name = "postgres"
+    placeholder = "%s"
+    serial_pk = "BIGSERIAL PRIMARY KEY"
+    real = "DOUBLE PRECISION"
+    text = "TEXT"
+    integer = "BIGINT"
+    needs_commit = False  # we connect with autocommit
+
+    def adapt(self, sql: str) -> str:
+        # None of our SQL contains a literal '?', so a plain swap is safe.
+        return sql.replace("?", "%s")
+
+
+def is_postgres_dsn(target: str) -> bool:
+    return str(target).startswith(("postgres://", "postgresql://"))
+
+
+# --------------------------------------------------------------------------------
+# storage
+# --------------------------------------------------------------------------------
 class Storage:
-    """Thin SQLite wrapper. Use `:memory:` for tests."""
+    """Trades, positions, key/value state and the equity curve.
 
-    def __init__(self, path: str = "data/memebot.sqlite3") -> None:
-        self.path = path
+    `target` is either a SQLite path (`data/memebot.sqlite3`, `:memory:`) or a
+    Postgres connection URL.
+    """
+
+    def __init__(self, target: str = "data/memebot.sqlite3", connection: Any = None) -> None:
+        self.target = target
+        self.postgres = is_postgres_dsn(target)
+        self.dialect: _Dialect = _PostgresDialect() if self.postgres else _Dialect()
+
+        if connection is not None:
+            self.conn = connection
+        elif self.postgres:
+            self.conn = self._connect_postgres(target)
+        else:
+            self.conn = self._connect_sqlite(target)
+
+        self._create_schema()
+
+    # ---- connections -----------------------------------------------------------
+    @staticmethod
+    def _connect_sqlite(path: str):
         if path != ":memory:":
             directory = os.path.dirname(path)
             if directory:
                 os.makedirs(directory, exist_ok=True)
-        self.conn = sqlite3.connect(path, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
-        self.conn.executescript(SCHEMA)
-        self.conn.commit()
+        conn = sqlite3.connect(path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    @staticmethod
+    def _connect_postgres(dsn: str):
+        try:
+            import psycopg  # type: ignore
+            from psycopg.rows import dict_row  # type: ignore
+        except ImportError as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError(
+                "Postgres state needs the 'psycopg' package: pip install 'psycopg[binary]'"
+            ) from exc
+        # Neon and friends hand out URLs with extra query args; psycopg handles them.
+        return psycopg.connect(dsn, autocommit=True, row_factory=dict_row)
+
+    # ---- plumbing --------------------------------------------------------------
+    def execute(self, sql: str, params: tuple = ()):  # noqa: D401 - thin wrapper
+        return self.conn.execute(self.dialect.adapt(sql), params)
+
+    def _commit(self) -> None:
+        if self.dialect.needs_commit:
+            self.conn.commit()
+
+    def _fetchone(self, sql: str, params: tuple = ()) -> Optional[Dict[str, Any]]:
+        row = self.execute(sql, params).fetchone()
+        return dict(row) if row is not None else None
+
+    def _fetchall(self, sql: str, params: tuple = ()) -> List[Dict[str, Any]]:
+        return [dict(row) for row in self.execute(sql, params).fetchall()]
 
     def close(self) -> None:
-        self.conn.close()
+        try:
+            self.conn.close()
+        except Exception:  # pragma: no cover - already closed
+            pass
+
+    # ---- schema ----------------------------------------------------------------
+    def _schema_statements(self) -> List[str]:
+        d = self.dialect
+        return [
+            f"""CREATE TABLE IF NOT EXISTS trades (
+                    id            {d.serial_pk},
+                    ts            {d.real} NOT NULL,
+                    client_id     {d.text},
+                    side          {d.text} NOT NULL,
+                    token_address {d.text} NOT NULL,
+                    symbol        {d.text},
+                    price         {d.real} NOT NULL,
+                    token_amount  {d.real} NOT NULL,
+                    usd_amount    {d.real} NOT NULL,
+                    fee_usd       {d.real} NOT NULL DEFAULT 0,
+                    slippage_bps  {d.real} NOT NULL DEFAULT 0,
+                    realized_pnl  {d.real} NOT NULL DEFAULT 0,
+                    tx_signature  {d.text},
+                    reason        {d.text},
+                    mode          {d.text}
+                )""",
+            "CREATE INDEX IF NOT EXISTS idx_trades_ts ON trades(ts)",
+            "CREATE INDEX IF NOT EXISTS idx_trades_token ON trades(token_address)",
+            f"""CREATE TABLE IF NOT EXISTS positions (
+                    token_address      {d.text} PRIMARY KEY,
+                    symbol             {d.text},
+                    name               {d.text},
+                    decimals           {d.integer} DEFAULT 9,
+                    pair_address       {d.text},
+                    quantity           {d.real} NOT NULL,
+                    avg_price          {d.real} NOT NULL,
+                    cost_usd           {d.real} NOT NULL,
+                    opened_at          {d.real} NOT NULL,
+                    last_price         {d.real} NOT NULL DEFAULT 0,
+                    high_price         {d.real} NOT NULL DEFAULT 0,
+                    fees_usd           {d.real} NOT NULL DEFAULT 0,
+                    realized_pnl_usd   {d.real} NOT NULL DEFAULT 0,
+                    peak_liquidity_usd {d.real} NOT NULL DEFAULT 0,
+                    last_seen_at       {d.real} NOT NULL DEFAULT 0
+                )""",
+            f"""CREATE TABLE IF NOT EXISTS state (
+                    key   {d.text} PRIMARY KEY,
+                    value {d.text} NOT NULL
+                )""",
+            f"""CREATE TABLE IF NOT EXISTS equity (
+                    ts        {d.real} PRIMARY KEY,
+                    cash      {d.real} NOT NULL,
+                    positions {d.real} NOT NULL,
+                    equity    {d.real} NOT NULL
+                )""",
+        ]
+
+    def _create_schema(self) -> None:
+        for statement in self._schema_statements():
+            self.execute(statement)
+        self._commit()
 
     # ---- key/value state -------------------------------------------------------
     def get_state(self, key: str, default: Any = None) -> Any:
-        row = self.conn.execute("SELECT value FROM state WHERE key = ?", (key,)).fetchone()
+        row = self._fetchone("SELECT value FROM state WHERE key = ?", (key,))
         if row is None:
             return default
         try:
@@ -91,16 +199,16 @@ class Storage:
             return default
 
     def set_state(self, key: str, value: Any) -> None:
-        self.conn.execute(
+        self.execute(
             "INSERT INTO state(key, value) VALUES(?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (key, json.dumps(value)),
         )
-        self.conn.commit()
+        self._commit()
 
     # ---- positions -------------------------------------------------------------
     def save_position(self, position: Position) -> None:
-        self.conn.execute(
+        self.execute(
             """INSERT INTO positions(token_address, symbol, name, decimals, pair_address,
                     quantity, avg_price, cost_usd, opened_at, last_price, high_price,
                     fees_usd, realized_pnl_usd, peak_liquidity_usd, last_seen_at)
@@ -132,41 +240,40 @@ class Storage:
                 position.last_seen_at,
             ),
         )
-        self.conn.commit()
+        self._commit()
 
     def delete_position(self, token_address: str) -> None:
-        self.conn.execute("DELETE FROM positions WHERE token_address = ?", (token_address,))
-        self.conn.commit()
+        self.execute("DELETE FROM positions WHERE token_address = ?", (token_address,))
+        self._commit()
 
     def load_positions(self) -> Dict[str, Position]:
-        rows = self.conn.execute("SELECT * FROM positions").fetchall()
         out: Dict[str, Position] = {}
-        for row in rows:
+        for row in self._fetchall("SELECT * FROM positions"):
             out[row["token_address"]] = Position(
                 token=Token(
                     address=row["token_address"],
                     symbol=row["symbol"] or "",
                     name=row["name"] or "",
-                    decimals=row["decimals"] or 9,
+                    decimals=int(row["decimals"] or 9),
                 ),
-                quantity=row["quantity"],
-                avg_price=row["avg_price"],
-                cost_usd=row["cost_usd"],
-                opened_at=row["opened_at"],
+                quantity=float(row["quantity"]),
+                avg_price=float(row["avg_price"]),
+                cost_usd=float(row["cost_usd"]),
+                opened_at=float(row["opened_at"]),
                 pair_address=row["pair_address"] or "",
-                last_price=row["last_price"],
-                high_price=row["high_price"],
-                fees_usd=row["fees_usd"],
-                realized_pnl_usd=row["realized_pnl_usd"],
-                peak_liquidity_usd=row["peak_liquidity_usd"],
-                last_seen_at=row["last_seen_at"],
+                last_price=float(row["last_price"]),
+                high_price=float(row["high_price"]),
+                fees_usd=float(row["fees_usd"]),
+                realized_pnl_usd=float(row["realized_pnl_usd"]),
+                peak_liquidity_usd=float(row["peak_liquidity_usd"]),
+                last_seen_at=float(row["last_seen_at"]),
             )
         return out
 
     # ---- trades ----------------------------------------------------------------
     def record_fill(self, fill: Fill, realized_pnl: float = 0.0, mode: str = "paper") -> None:
         row = fill.as_row()
-        self.conn.execute(
+        self.execute(
             """INSERT INTO trades(ts, client_id, side, token_address, symbol, price,
                     token_amount, usd_amount, fee_usd, slippage_bps, realized_pnl,
                     tx_signature, reason, mode)
@@ -177,75 +284,98 @@ class Storage:
                 row["slippage_bps"], realized_pnl, row["tx_signature"], row["reason"], mode,
             ),
         )
-        self.conn.commit()
+        self._commit()
 
-    def list_trades(self, limit: int = 50, since: Optional[float] = None) -> List[sqlite3.Row]:
+    def list_trades(self, limit: int = 50, since: Optional[float] = None) -> List[Dict[str, Any]]:
         if since is not None:
-            return self.conn.execute(
+            return self._fetchall(
                 "SELECT * FROM trades WHERE ts >= ? ORDER BY ts DESC LIMIT ?", (since, limit)
-            ).fetchall()
-        return self.conn.execute("SELECT * FROM trades ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
+            )
+        return self._fetchall("SELECT * FROM trades ORDER BY ts DESC LIMIT ?", (limit,))
 
     def realized_pnl_since(self, since: float) -> float:
-        row = self.conn.execute(
+        row = self._fetchone(
             "SELECT COALESCE(SUM(realized_pnl), 0) AS pnl FROM trades WHERE ts >= ?", (since,)
-        ).fetchone()
-        return float(row["pnl"] or 0.0)
+        )
+        return float((row or {}).get("pnl") or 0.0)
 
     def last_exit_time(self, token_address: str) -> float:
-        row = self.conn.execute(
+        row = self._fetchone(
             "SELECT MAX(ts) AS ts FROM trades WHERE token_address = ? AND side = 'sell'",
             (token_address,),
-        ).fetchone()
-        return float(row["ts"] or 0.0)
+        )
+        return float((row or {}).get("ts") or 0.0)
 
     def trade_stats(self) -> Dict[str, Any]:
-        row = self.conn.execute(
+        totals = self._fetchone(
             """SELECT COUNT(*) AS n,
-                      COALESCE(SUM(realized_pnl), 0) AS pnl,
-                      COALESCE(SUM(fee_usd), 0) AS fees
+                      COALESCE(SUM(realized_pnl), 0) AS pnl
                FROM trades WHERE side = 'sell'"""
-        ).fetchone()
-        wins = self.conn.execute(
+        ) or {}
+        wins_row = self._fetchone(
             "SELECT COUNT(*) AS n FROM trades WHERE side = 'sell' AND realized_pnl > 0"
-        ).fetchone()["n"]
-        total_fees = self.conn.execute("SELECT COALESCE(SUM(fee_usd), 0) AS f FROM trades").fetchone()["f"]
-        closed = int(row["n"] or 0)
+        ) or {}
+        fees_row = self._fetchone("SELECT COALESCE(SUM(fee_usd), 0) AS f FROM trades") or {}
+
+        closed = int(totals.get("n") or 0)
+        wins = int(wins_row.get("n") or 0)
         return {
             "closed_trades": closed,
-            "wins": int(wins or 0),
-            "losses": closed - int(wins or 0),
+            "wins": wins,
+            "losses": closed - wins,
             "win_rate": (wins / closed) if closed else 0.0,
-            "realized_pnl_usd": float(row["pnl"] or 0.0),
-            "total_fees_usd": float(total_fees or 0.0),
+            "realized_pnl_usd": float(totals.get("pnl") or 0.0),
+            "total_fees_usd": float(fees_row.get("f") or 0.0),
         }
 
     # ---- equity curve ----------------------------------------------------------
     def record_equity(self, cash: float, positions_value: float, ts: Optional[float] = None) -> None:
         ts = ts if ts is not None else time.time()
-        self.conn.execute(
-            "INSERT OR REPLACE INTO equity(ts, cash, positions, equity) VALUES(?,?,?,?)",
+        self.execute(
+            """INSERT INTO equity(ts, cash, positions, equity) VALUES(?,?,?,?)
+               ON CONFLICT(ts) DO UPDATE SET
+                    cash = excluded.cash,
+                    positions = excluded.positions,
+                    equity = excluded.equity""",
             (ts, cash, positions_value, cash + positions_value),
         )
-        self.conn.commit()
+        self._commit()
 
-    def equity_curve(self, limit: int = 500) -> List[sqlite3.Row]:
-        return self.conn.execute(
-            "SELECT * FROM equity ORDER BY ts DESC LIMIT ?", (limit,)
-        ).fetchall()
+    def equity_curve(self, limit: int = 500) -> List[Dict[str, Any]]:
+        return self._fetchall("SELECT * FROM equity ORDER BY ts DESC LIMIT ?", (limit,))
 
     def peak_equity(self) -> float:
-        row = self.conn.execute("SELECT MAX(equity) AS e FROM equity").fetchone()
-        return float(row["e"] or 0.0)
+        row = self._fetchone("SELECT MAX(equity) AS e FROM equity")
+        return float((row or {}).get("e") or 0.0)
 
     def equity_at_or_before(self, ts: float) -> Optional[float]:
-        row = self.conn.execute(
+        row = self._fetchone(
             "SELECT equity FROM equity WHERE ts <= ? ORDER BY ts DESC LIMIT 1", (ts,)
-        ).fetchone()
+        )
         return float(row["equity"]) if row else None
 
     def reset(self) -> None:
-        self.conn.executescript(
-            "DELETE FROM trades; DELETE FROM positions; DELETE FROM state; DELETE FROM equity;"
-        )
-        self.conn.commit()
+        for table in ("trades", "positions", "state", "equity"):
+            self.execute(f"DELETE FROM {table}")
+        self._commit()
+
+
+def open_storage(target: str = "data/memebot.sqlite3") -> Storage:
+    """Open whichever backend `target` describes."""
+    return Storage(target)
+
+
+def resolve_state_target(configured: str) -> str:
+    """Pick the state location, preferring an explicitly provided database URL.
+
+    Hosted Postgres providers inject their own environment variable, so a
+    deployment works with no config edit at all:
+
+        MEMEBOT_STATE_DB > MEMEBOT_DATABASE_URL > POSTGRES_URL >
+        DATABASE_URL > the configured value
+    """
+    for key in ("MEMEBOT_STATE_DB", "MEMEBOT_DATABASE_URL", "POSTGRES_URL", "DATABASE_URL"):
+        value = os.environ.get(key, "").strip()
+        if value:
+            return value
+    return configured

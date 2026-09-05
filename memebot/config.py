@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .models import Mode, USDC_MINT, WSOL_MINT
+from .storage import resolve_state_target
 
 
 @dataclass
@@ -34,9 +35,15 @@ class DataConfig:
     # Keep well under DexScreener's published 300 req/min limit.
     rate_limit_per_minute: int = 120
     cache_ttl_seconds: float = 5.0
+    # Also sample the "newest tokens" and "latest boosts" feeds, not just search.
+    use_token_profiles: bool = True
     dexscreener_base_url: str = "https://api.dexscreener.com"
-    jupiter_quote_url: str = "https://quote-api.jup.ag/v6"
-    jupiter_price_url: str = "https://api.jup.ag/price/v2"
+    # Jupiter's keyless tier. With a paid key (JUPITER_API_KEY in the env) point
+    # these at https://api.jup.ag/swap/v1 and https://api.jup.ag/price/v2.
+    jupiter_quote_url: str = "https://lite-api.jup.ag/swap/v1"
+    jupiter_price_url: str = "https://lite-api.jup.ag/price/v2"
+    # Jupiter's free tier is stricter than DexScreener's, so it gets its own budget.
+    jupiter_rate_limit_per_minute: int = 60
 
 
 @dataclass
@@ -143,6 +150,7 @@ class ExecutionConfig:
 class BotConfig:
     mode: str = Mode.PAPER.value
     poll_interval_seconds: float = 30.0
+    # A SQLite path, or a postgres:// URL for hosted/serverless deployments.
     state_db: str = "data/memebot.sqlite3"
     log_file: str = "logs/memebot.log"
     log_level: str = "INFO"
@@ -229,7 +237,6 @@ def load_dotenv(path: str = ".env") -> None:
 _ENV_OVERRIDES = {
     "MEMEBOT_MODE": ("mode", str),
     "MEMEBOT_POLL_INTERVAL": ("poll_interval_seconds", float),
-    "MEMEBOT_STATE_DB": ("state_db", str),
     "MEMEBOT_LOG_LEVEL": ("log_level", str),
     "MEMEBOT_STARTING_CASH": ("risk.starting_cash_usd", float),
     "MEMEBOT_MAX_POSITIONS": ("risk.max_open_positions", int),
@@ -262,6 +269,10 @@ def load_config(path: Optional[str] = None, overrides: Optional[Dict[str, Any]] 
         raw = os.environ.get(env_key)
         if raw is not None and raw != "":
             _set_path(cfg, dotted, caster(raw))
+
+    # A database URL in the environment (MEMEBOT_STATE_DB, POSTGRES_URL,
+    # DATABASE_URL...) beats the config file, so a deployment needs no edit.
+    cfg.state_db = resolve_state_target(cfg.state_db)
 
     for dotted, value in (overrides or {}).items():
         if value is None:

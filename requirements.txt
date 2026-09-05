@@ -1,6 +1,10 @@
-# Core runtime (paper trading works with just these)
+# Core runtime - paper trading works with just these.
 requests>=2.31
 PyYAML>=6.0
 
-# Live trading on Solana (optional - only needed when mode: live)
-# Install with:  pip install -r requirements-live.txt
+# Postgres-backed state. Needed for the Vercel deployment, and for a local bot
+# that shares its book with a hosted dashboard. Harmless if you only use SQLite.
+psycopg[binary]>=3.1
+
+# Live trading on Solana adds two more packages:
+#   pip install -r requirements-live.txt

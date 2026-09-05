@@ -19,7 +19,7 @@ from .config import BotConfig, load_config
 from .engine import TradingEngine
 from .logging_utils import setup_logging
 from .models import Mode
-from .storage import Storage
+from .storage import Storage, open_storage
 
 
 # --------------------------------------------------------------------------------
@@ -106,6 +106,7 @@ def cmd_scan(args: argparse.Namespace, config: BotConfig) -> int:
     candidates = engine.data.discover(
         config.data.search_terms,
         use_boosted_feed=config.data.use_boosted_feed,
+        use_token_profiles=config.data.use_token_profiles,
         max_candidates=config.data.max_candidates,
     )
     result = engine.filter.apply(candidates)
@@ -137,8 +138,28 @@ def cmd_scan(args: argparse.Namespace, config: BotConfig) -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace, config: BotConfig) -> int:
+    """Check every dependency and say whether the bot can actually trade."""
+    from .doctor import FAIL, format_report, run_checks
+
+    print(f"\nmemebot {__version__} health check ({config.mode} mode)\n")
+    report = run_checks(config, deep=not args.quick)
+    print(format_report(report))
+
+    if report.failures:
+        print(f"\n{len(report.failures)} check(s) FAILED. The bot will run but see an empty market.")
+        print("Common causes: no internet, a corporate/VPN proxy, or an API endpoint that moved")
+        print("(override data.dexscreener_base_url / data.jupiter_price_url in your config).")
+        return 1
+    if report.warnings:
+        print(f"\nAll dependencies reachable, with {len(report.warnings)} warning(s) above.")
+        return 0
+    print("\nAll checks passed - the bot is seeing the live market.")
+    return 0
+
+
 def cmd_status(args: argparse.Namespace, config: BotConfig) -> int:
-    storage = Storage(config.state_db)
+    storage = open_storage(config.state_db)
     from .portfolio import Portfolio
 
     portfolio = Portfolio(storage, config.risk.starting_cash_usd, mode=config.mode)
@@ -180,7 +201,7 @@ def cmd_status(args: argparse.Namespace, config: BotConfig) -> int:
 
 
 def cmd_trades(args: argparse.Namespace, config: BotConfig) -> int:
-    storage = Storage(config.state_db)
+    storage = open_storage(config.state_db)
     trades = storage.list_trades(limit=args.limit)
     if args.json:
         print(json.dumps([dict(t) for t in trades], indent=2, default=str))
@@ -231,7 +252,7 @@ def cmd_reset(args: argparse.Namespace, config: BotConfig) -> int:
         if answer not in ("y", "yes"):
             print("Aborted.")
             return 1
-    storage = Storage(config.state_db)
+    storage = open_storage(config.state_db)
     storage.reset()
     storage.close()
     print(f"State reset. Starting cash is {_money(config.risk.starting_cash_usd)}.")
@@ -274,6 +295,11 @@ def build_parser() -> argparse.ArgumentParser:
     scan = sub.add_parser("scan", help="show scored candidates without trading")
     scan.add_argument("--limit", type=int, default=20)
     scan.set_defaults(func=cmd_scan)
+
+    doctor = sub.add_parser("doctor", help="check API connectivity and configuration")
+    doctor.add_argument("--quick", action="store_true",
+                        help="skip the Jupiter routing probe")
+    doctor.set_defaults(func=cmd_doctor)
 
     status = sub.add_parser("status", help="portfolio summary")
     status.add_argument("--json", action="store_true")

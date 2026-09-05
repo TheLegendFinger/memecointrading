@@ -8,6 +8,8 @@ Endpoints used (all public, documented at https://docs.dexscreener.com):
   GET /token-pairs/v1/{chain}/{tokenAddress}
   GET /latest/dex/pairs/{chain}/{pairAddresses}
   GET /token-boosts/top/v1
+  GET /token-boosts/latest/v1
+  GET /token-profiles/latest/v1
 """
 
 from __future__ import annotations
@@ -177,10 +179,9 @@ class DexScreenerClient:
             out.extend(self._pairs_for_chain(raw))
         return out
 
-    def boosted_tokens(self, limit: int = 30) -> List[str]:
-        """Token addresses from the paid-boost leaderboard - a decent proxy for
-        'what is being promoted right now'. Returns addresses, not pairs."""
-        data = self._get("/token-boosts/top/v1")
+    def _token_addresses(self, path: str, limit: int) -> List[str]:
+        """Pull tokenAddress values for our chain out of a feed endpoint."""
+        data = self._get(path)
         if not isinstance(data, list):
             return []
         addresses: List[str] = []
@@ -196,6 +197,19 @@ class DexScreenerClient:
                 break
         return addresses
 
+    def boosted_tokens(self, limit: int = 30) -> List[str]:
+        """Tokens from the paid-boost leaderboard - a proxy for what is being
+        promoted right now. Returns token addresses, not pairs."""
+        top = self._token_addresses("/token-boosts/top/v1", limit)
+        latest = self._token_addresses("/token-boosts/latest/v1", limit)
+        merged = top + [a for a in latest if a not in top]
+        return merged[:limit]
+
+    def token_profiles(self, limit: int = 30) -> List[str]:
+        """The newest tokens to publish a DexScreener profile. Noisy, but it is
+        where genuinely new names show up before they trend."""
+        return self._token_addresses("/token-profiles/latest/v1", limit)
+
     def best_pair(self, token_address: str) -> Optional[PairSnapshot]:
         """The deepest pool for a token - the one we would actually route through."""
         pairs = self.pairs_for_token(token_address)
@@ -209,12 +223,15 @@ class DexScreenerClient:
         self,
         search_terms: Iterable[str],
         use_boosted_feed: bool = True,
+        use_token_profiles: bool = True,
         max_candidates: int = 120,
     ) -> List[PairSnapshot]:
         """Build the candidate universe for one scan cycle.
 
-        Pairs are de-duplicated by base token, keeping the deepest pool, and
-        returned sorted by 1h volume (the busiest names first).
+        Three funnels feed it: full-text search (broad, catches anything with
+        volume), the boost leaderboards (what is being promoted), and the newest
+        token profiles (early names). Results are de-duplicated by base token,
+        keeping the deepest pool, and sorted by 1h volume.
         """
         by_token: Dict[str, PairSnapshot] = {}
 
@@ -227,13 +244,18 @@ class DexScreenerClient:
             for snap in self.search(term):
                 add(snap)
 
+        feed_addresses: List[str] = []
         if use_boosted_feed:
-            for address in self.boosted_tokens():
-                if address in by_token:
-                    continue
-                pair = self.best_pair(address)
-                if pair:
-                    add(pair)
+            feed_addresses.extend(self.boosted_tokens())
+        if use_token_profiles:
+            feed_addresses.extend(self.token_profiles())
+
+        for address in feed_addresses:
+            if address in by_token:
+                continue
+            pair = self.best_pair(address)
+            if pair:
+                add(pair)
 
         candidates = sorted(by_token.values(), key=lambda p: p.vol("h1"), reverse=True)
         return candidates[:max_candidates]

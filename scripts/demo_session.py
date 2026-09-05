@@ -88,7 +88,8 @@ class SimulatedMarket:
             self.tick(address)
 
     # ---- DexScreenerClient API ----
-    def discover(self, search_terms, use_boosted_feed=True, max_candidates=120):
+    def discover(self, search_terms, use_boosted_feed=True, use_token_profiles=True,
+                 max_candidates=120):
         return list(self.pairs.values())[:max_candidates]
 
     def best_pair(self, token_address):

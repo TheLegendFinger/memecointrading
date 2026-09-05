@@ -27,7 +27,7 @@ from .execution.base import Executor
 from .models import Fill, Mode, Order, PairSnapshot, Position, Side, Signal
 from .portfolio import Portfolio
 from .risk import RiskManager
-from .storage import Storage
+from .storage import Storage, open_storage
 from .strategy import CandidateFilter, build_strategy
 
 log = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ class TradingEngine:
         jupiter: Optional[JupiterClient] = None,
     ) -> None:
         self.config = config
-        self.storage = storage or Storage(config.state_db)
+        self.storage = storage or open_storage(config.state_db)
 
         self.data = data or DexScreenerClient(
             base_url=config.data.dexscreener_base_url,
@@ -78,7 +78,7 @@ class TradingEngine:
             timeout=config.data.request_timeout,
             max_retries=config.data.max_retries,
             backoff_seconds=config.data.backoff_seconds,
-            rate_limit_per_minute=config.data.rate_limit_per_minute,
+            rate_limit_per_minute=config.data.jupiter_rate_limit_per_minute,
         )
         self.executor = executor or build_executor(config, data=self.data, jupiter=self.jupiter)
         self.portfolio = portfolio or Portfolio(
@@ -222,6 +222,7 @@ class TradingEngine:
             candidates = self.data.discover(
                 self.config.data.search_terms,
                 use_boosted_feed=self.config.data.use_boosted_feed,
+                use_token_profiles=self.config.data.use_token_profiles,
                 max_candidates=self.config.data.max_candidates,
             )
         except Exception as exc:  # pragma: no cover - network dependent

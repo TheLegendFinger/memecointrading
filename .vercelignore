@@ -1,0 +1,15 @@
+# Keep the deployment to the app itself.
+tests/
+scripts/
+.github/
+data/
+logs/
+*.sqlite3
+*.db
+config.yaml
+config.json
+.env
+README.md
+LICENSE
+requirements-dev.txt
+requirements-live.txt

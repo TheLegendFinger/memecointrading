@@ -9,6 +9,8 @@
 mode: paper
 
 poll_interval_seconds: 30
+# A SQLite path, or a postgres:// URL. A DATABASE_URL / POSTGRES_URL in the
+# environment overrides this, so a deployment needs no edit here.
 state_db: data/memebot.sqlite3
 log_file: logs/memebot.log
 log_level: INFO
@@ -18,10 +20,18 @@ data:
   chain: solana
   # DexScreener search terms used to build the candidate universe each cycle.
   search_terms: ["SOL", "WSOL", "pump", "bonk"]
-  use_boosted_feed: true      # also pull the DexScreener boost leaderboard
+  use_boosted_feed: true      # also pull the DexScreener boost leaderboards
+  use_token_profiles: true    # ...and the newest token profiles
   max_candidates: 120
   rate_limit_per_minute: 120  # DexScreener allows ~300/min; stay well under
+  jupiter_rate_limit_per_minute: 60   # Jupiter's keyless tier is stricter
   cache_ttl_seconds: 5
+  # Jupiter's keyless endpoints. With a paid key (JUPITER_API_KEY in the env)
+  # switch these to https://api.jup.ag/swap/v1 and https://api.jup.ag/price/v2.
+  # If Jupiter moves an endpoint, `memebot doctor` will tell you, and this is
+  # where you point it at the new one.
+  jupiter_quote_url: https://lite-api.jup.ag/swap/v1
+  jupiter_price_url: https://lite-api.jup.ag/price/v2
 
 # Hard safety gates. A pair must clear all of these before it is even scored.
 filters:
@@ -80,7 +90,9 @@ execution:
   priority_fee_usd: 0.35
   paper_base_slippage_bps: 30
   paper_failure_rate: 0.02        # 2% of simulated swaps fail, like real life
-  paper_use_live_quotes: false    # true = route paper fills through Jupiter
+  # true = price paper fills off real Jupiter routes instead of the built-in
+  # impact curve. The most realistic setting; costs two API calls per order.
+  paper_use_live_quotes: false
   # paper_random_seed: 42         # set for reproducible paper runs
 
   # Live only:

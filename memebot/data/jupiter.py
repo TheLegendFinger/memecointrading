@@ -14,6 +14,7 @@ Endpoints (v6 / price v2):
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -51,26 +52,52 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _parse_price_payload(data: Any) -> Dict[str, float]:
+    """Read Jupiter's price response.
+
+    The v2 shape nests results under "data" with a "price" field; v3 returns the
+    mints at the top level with "usdPrice". Accept either so an upstream version
+    bump does not silently zero out every price.
+    """
+    if not isinstance(data, dict):
+        return {}
+    entries = data.get("data") if isinstance(data.get("data"), dict) else data
+    out: Dict[str, float] = {}
+    for mint, entry in (entries or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        price = _to_float(entry.get("price")) or _to_float(entry.get("usdPrice"))
+        if price > 0:
+            out[str(mint)] = price
+    return out
+
+
 class JupiterClient:
     """Thin wrapper over the Jupiter APIs. Read-only; signing lives in the executor."""
 
     def __init__(
         self,
-        quote_url: str = "https://quote-api.jup.ag/v6",
-        price_url: str = "https://api.jup.ag/price/v2",
+        quote_url: str = "https://lite-api.jup.ag/swap/v1",
+        price_url: str = "https://lite-api.jup.ag/price/v2",
         timeout: float = 12.0,
         max_retries: int = 3,
         backoff_seconds: float = 1.0,
-        rate_limit_per_minute: int = 120,
+        rate_limit_per_minute: int = 60,
+        api_key: Optional[str] = None,
         http: Optional[HttpClient] = None,
     ) -> None:
         self.quote_url = quote_url.rstrip("/")
         self.price_url = price_url
+        # A paid Jupiter key raises the rate limit; the keyless tier works fine
+        # for a handful of orders a minute.
+        self.api_key = api_key if api_key is not None else os.environ.get("JUPITER_API_KEY", "").strip()
+        headers = {"x-api-key": self.api_key} if self.api_key else None
         self.http = http or HttpClient(
             timeout=timeout,
             max_retries=max_retries,
             backoff_seconds=backoff_seconds,
             rate_limit_per_minute=rate_limit_per_minute,
+            headers=headers,
         )
         self._decimals: Dict[str, int] = {WSOL_MINT: 9, USDC_MINT: 6}
 
@@ -115,11 +142,8 @@ class JupiterClient:
             except HttpError as exc:
                 log.warning("Jupiter price request failed: %s", exc)
                 continue
-            for mint, entry in ((data or {}).get("data") or {}).items():
-                if isinstance(entry, dict):
-                    price = _to_float(entry.get("price"))
-                    if price > 0:
-                        out[mint] = price
+            for mint, price in _parse_price_payload(data).items():
+                out[mint] = price
         return out
 
     def price(self, mint: str) -> float:

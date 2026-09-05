@@ -1,0 +1,79 @@
+# Run trading cycles on GitHub's servers - no PC left on, no Vercel Pro plan.
+#
+# Setup:
+#   1. Create a free Postgres database (Neon, Supabase, Vercel Postgres).
+#   2. Repo Settings > Secrets and variables > Actions > New repository secret:
+#        DATABASE_URL = postgresql://...
+#   3. Enable Actions on the repo. That's it - the schedule below takes over.
+#
+# Notes:
+#   * GitHub's minimum interval is 5 minutes, and scheduled runs are queued
+#     rather than punctual - a busy period can delay a run by several minutes.
+#     That is fine for this bot's timeframes but is not high-frequency trading.
+#   * Without DATABASE_URL the job exits cleanly instead of failing every
+#     schedule, so a fork does not spam you with red crosses.
+#   * This runs PAPER mode. Keep it that way here: a repository secret is not
+#     the place for a wallet key.
+
+name: trading cycle
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      cycles:
+        description: "How many cycles to run"
+        default: "1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trading-cycle
+  cancel-in-progress: false
+
+jobs:
+  cycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check configuration
+        id: check
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "DATABASE_URL secret is not set - skipping."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run trading cycles
+        if: steps.check.outputs.configured == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MEMEBOT_MODE: paper
+          MEMEBOT_LOG_LEVEL: INFO
+        run: |
+          python -m memebot run \
+            --config config.example.yaml \
+            --cycles "${{ github.event.inputs.cycles || 1 }}" \
+            --interval 30
+
+      - name: Portfolio summary
+        if: steps.check.outputs.configured == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m memebot status

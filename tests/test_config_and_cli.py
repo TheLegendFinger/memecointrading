@@ -178,3 +178,35 @@ def test_once_reports_a_blocked_executor(monkeypatch, capsys):
     monkeypatch.setattr(cli, "_build_engine", StubEngine)
     assert cli.main(["once"]) == 1
     assert "not armed" in capsys.readouterr().err
+
+
+def test_the_shipped_example_config_is_valid():
+    """config.example.yaml is the file users copy - every key must be real."""
+    cfg = load_config("config.example.yaml")
+    assert cfg.mode == "paper"
+    assert cfg.data.use_token_profiles is True
+    assert cfg.execution.paper_use_live_quotes is False
+
+
+def test_state_db_accepts_a_postgres_url(monkeypatch):
+    monkeypatch.delenv("POSTGRES_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("MEMEBOT_STATE_DB", raising=False)
+    cfg = load_config(None, {"state_db": "postgresql://u:p@host/db"})
+    cfg.validate()
+    assert cfg.state_db.startswith("postgresql://")
+
+
+def test_database_url_in_the_environment_wins_over_the_file(tmp_path, monkeypatch):
+    path = tmp_path / "config.yaml"
+    path.write_text("state_db: data/local.sqlite3\n")
+    monkeypatch.delenv("MEMEBOT_STATE_DB", raising=False)
+    monkeypatch.delenv("POSTGRES_URL", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "postgres://cloud/db")
+    assert load_config(str(path)).state_db == "postgres://cloud/db"
+
+
+def test_an_explicit_db_flag_still_wins_over_the_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgres://cloud/db")
+    cfg = load_config(None, {"state_db": str(tmp_path / "forced.sqlite3")})
+    assert cfg.state_db.endswith("forced.sqlite3")

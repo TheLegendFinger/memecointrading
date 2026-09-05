@@ -82,7 +82,7 @@ class FakeDexScreener:
 
     # DexScreenerClient API surface used by the engine
     def discover(self, search_terms: Iterable[str], use_boosted_feed: bool = True,
-                 max_candidates: int = 120) -> List[PairSnapshot]:
+                 use_token_profiles: bool = True, max_candidates: int = 120) -> List[PairSnapshot]:
         self.discover_calls += 1
         return list(self.pairs.values())[:max_candidates]
 

@@ -65,15 +65,15 @@ strict — `doctor.ps1` will tell you which, and the
 
 ## 4. Create the wallet
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\wallet.ps1 -New -Save
-```
+Menu option **7**, then **2**. (Or `scripts\wallet.ps1 -New -Save`.)
 
-This prints an **address** and a **private key**, and saves the key to `.env`
+It prints an **address** and a **12-word seed phrase**, and saves both to `.env`
 (which git ignores).
 
-* **Copy the private key somewhere safe now.** It is shown once. Anyone who has
-  it can take everything in the wallet.
+* **Write the seed phrase down on paper, now.** Those words are the wallet.
+  They restore it in Phantom or Solflare if this machine dies, and anyone who
+  has them can take everything in it.
+* Never type the phrase into a website. The only place it belongs is paper.
 * This is a **burner**. Never use a wallet that holds anything else — the bot
   can spend everything in it.
 
@@ -139,9 +139,12 @@ To sell everything at market:
 .\.venv\Scripts\python.exe -m memebot liquidate --config config.live.yaml
 ```
 
-To take the money out entirely, send the SOL from the wallet back to your
-exchange using any Solana wallet app (Phantom, Solflare) with the private key
-you saved in step 4.
+To take the money out, use menu **7** then **5** (Withdraw) — it sends SOL to
+any address you give it, an amount or `all`. Close positions first (menu **3**),
+because withdrawing moves SOL and not the memecoins.
+
+You can also import the seed phrase from step 4 into Phantom and move funds from
+there.
 
 ---
 

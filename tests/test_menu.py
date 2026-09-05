@@ -329,3 +329,94 @@ def test_logging_goes_to_the_file_while_the_display_is_up(monkeypatch, tmp_path)
     # The test harness is not a terminal, so the view is inactive and ordinary
     # logging stays on - which is exactly the piped-output behaviour.
     assert calls["console"] is True
+
+
+# ---- the wallet submenu --------------------------------------------------------
+def test_the_wallet_submenu_offers_every_operation(monkeypatch):
+    monkeypatch.setattr(Menu, "ensure_solana_packages", lambda self: True)
+    menu, driver = menu_for("7", "0", "0")
+    menu.run()
+
+    for expected in ("Show wallet", "Create a new wallet", "Show seed phrase",
+                     "Restore from a seed phrase", "Withdraw SOL"):
+        assert expected in driver.text
+
+
+def test_the_wallet_submenu_installs_the_solana_packages_first(monkeypatch):
+    """The reported bug: creating a wallet failed telling you to run pip yourself."""
+    calls = []
+    monkeypatch.setattr(Menu, "ensure_solana_packages",
+                        lambda self: calls.append(True) or True)
+    menu, _driver = menu_for("7", "0", "0")
+    menu.run()
+    assert calls, "the wallet menu must ensure its dependencies"
+
+
+def test_the_wallet_submenu_stops_when_packages_cannot_be_installed(monkeypatch):
+    monkeypatch.setattr(Menu, "ensure_solana_packages", lambda self: False)
+    shown = []
+    monkeypatch.setattr(Menu, "_wallet_cli", lambda self, **kw: shown.append(kw))
+
+    menu, _driver = menu_for("7", "0")
+    menu.run()
+    assert shown == [], "nothing should run without the packages"
+
+
+@pytest.mark.parametrize("key, expected", [
+    ("1", {}),                      # plain show: no flags
+    ("3", {"phrase": True}),
+    ("4", {"import_phrase": True}),
+])
+def test_wallet_options_call_the_right_command(monkeypatch, key, expected):
+    monkeypatch.setattr(Menu, "ensure_solana_packages", lambda self: True)
+    calls = []
+    monkeypatch.setattr(Menu, "_wallet_cli", lambda self, **kw: calls.append(kw) or 0)
+    # option 3 asks for confirmation before revealing the phrase
+    answers = ["7", key] + (["y"] if key == "3" else []) + ["", "0", "0"]
+
+    menu, _driver = menu_for(*answers)
+    menu.run()
+
+    assert calls, f"option {key} ran nothing"
+    assert calls[0] == expected
+
+
+def test_the_seed_phrase_is_not_shown_without_confirmation(monkeypatch):
+    monkeypatch.setattr(Menu, "ensure_solana_packages", lambda self: True)
+    calls = []
+    monkeypatch.setattr(Menu, "_wallet_cli", lambda self, **kw: calls.append(kw) or 0)
+
+    menu, driver = menu_for("7", "3", "n", "", "0", "0")
+    menu.run()
+
+    assert calls == [], "declining must not print the phrase"
+    assert "Not shown" in driver.text
+
+
+def test_creating_a_second_wallet_warns_instead_of_replacing(monkeypatch, tmp_path):
+    """Overwriting a funded wallet's key would strand the funds."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("SOLANA_PRIVATE_KEY=already-here\n")
+    monkeypatch.setattr(Menu, "ensure_solana_packages", lambda self: True)
+    calls = []
+    monkeypatch.setattr(Menu, "_wallet_cli", lambda self, **kw: calls.append(kw) or 0)
+
+    menu, driver = menu_for("7", "2", "", "0", "0")
+    menu.run()
+
+    assert calls == [], "it must not create over an existing wallet"
+    assert "already configured" in driver.text
+    assert "back up its seed phrase" in driver.text
+
+
+def test_withdrawing_warns_while_positions_are_open(monkeypatch):
+    monkeypatch.setattr(Menu, "ensure_solana_packages", lambda self: True)
+    monkeypatch.setattr(Menu, "_open_position_count", lambda self: 2)
+    calls = []
+    monkeypatch.setattr(Menu, "_wallet_cli", lambda self, **kw: calls.append(kw) or 0)
+
+    menu, driver = menu_for("7", "5", "n", "", "0", "0")
+    menu.run()
+
+    assert "still holds 2 position" in driver.text
+    assert calls == [], "declining the warning must not withdraw"

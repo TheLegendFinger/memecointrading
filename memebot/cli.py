@@ -156,42 +156,207 @@ def cmd_menu(args: argparse.Namespace, config: BotConfig) -> int:
     return Menu(config_path=args.config).run()
 
 
-def cmd_wallet(args: argparse.Namespace, config: BotConfig) -> int:
-    """Create a wallet, or show the configured one and its balance."""
+def _print_new_wallet(address: str, secret: str, phrase: str, saved: bool) -> None:
+    """Show a freshly created wallet. The phrase is the part that matters."""
+    print("\n  New Solana wallet created.\n")
+    print(f"  Address       {address}")
+    print(f"  Explorer      https://solscan.io/account/{address}")
+    if phrase:
+        print("\n  SEED PHRASE (write this down, on paper):\n")
+        words = phrase.split()
+        for row in range(0, len(words), 4):
+            line = "   ".join(f"{i + 1:>2}. {word:<10}" for i, word in
+                              enumerate(words[row:row + 4], start=row))
+            print(f"    {line}")
+    print("\n  " + "!" * 68)
+    print("  Anyone with this phrase can take everything in the wallet.")
+    print("  Never type it into a website. Never share it. Write it on paper.")
+    print("  " + "!" * 68)
+    if phrase:
+        print("\n  It restores this wallet in Phantom or Solflare:")
+        print("  'Import wallet' > paste the phrase > pick the first account.")
+    if saved:
+        print("\n  Saved to .env, which git ignores. Back the phrase up anyway -")
+        print("  losing that folder without a written copy loses the funds.")
+    else:
+        print("\n  Add these lines to .env to use it:")
+        if phrase:
+            print(f"    SOLANA_MNEMONIC={phrase}")
+        print(f"    SOLANA_PRIVATE_KEY={secret}")
+    print(f"\n  Fund it: send SOL to {address}")
+    print("  Start with an amount you would be fine losing entirely.\n")
+
+
+def _create_wallet(args: argparse.Namespace) -> int:
     from .wallet import (
-        WalletError, address_from_secret, append_to_env, configured_address, create_keypair,
+        ENV_KEY, ENV_MNEMONIC_KEY, WalletError, append_to_env, create_keypair,
+        create_wallet_with_phrase,
     )
 
-    if args.new:
-        try:
+    try:
+        if args.no_phrase:
             address, secret = create_keypair()
+            phrase = ""
+        else:
+            address, secret, phrase = create_wallet_with_phrase(words=args.words)
+    except WalletError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    saved = False
+    if args.save:
+        values = {ENV_KEY: secret}
+        if phrase:
+            values[ENV_MNEMONIC_KEY] = phrase
+        try:
+            append_to_env(values)
+            saved = True
         except WalletError as exc:
-            print(f"error: {exc}", file=sys.stderr)
+            _print_new_wallet(address, secret, phrase, saved=False)
+            print(f"  Not saved: {exc}\n")
             return 1
 
-        print("\n  New Solana wallet created.\n")
-        print(f"  Address     {address}")
-        print(f"  Private key {secret}")
-        print("\n  " + "!" * 68)
-        print("  This private key is shown ONCE and controls every token in the wallet.")
-        print("  Save it somewhere safe. Anyone who has it can drain the wallet.")
-        print("  " + "!" * 68)
+    _print_new_wallet(address, secret, phrase, saved=saved)
+    return 0
 
-        if args.save:
-            try:
-                append_to_env({"SOLANA_PRIVATE_KEY": secret})
-            except WalletError as exc:
-                print(f"\n  Not saved: {exc}")
-                return 1
-            print("\n  Saved to .env (which is gitignored - keep it that way).")
-        else:
-            print("\n  To use it, add this line to your .env file:")
-            print(f"    SOLANA_PRIVATE_KEY={secret}")
-            print("  ...or re-run with --save to have it written for you.")
 
-        print(f"\n  Then fund it: send SOL to {address}")
-        print("  Start with a small amount you are willing to lose entirely.\n")
+def _import_wallet(args: argparse.Namespace) -> int:
+    from .wallet import (
+        ENV_KEY, ENV_MNEMONIC_KEY, WalletError, address_from_mnemonic, append_to_env,
+        keypair_from_mnemonic, validate_mnemonic,
+    )
+
+    print("\n  Restore a wallet from its 12 or 24 word seed phrase.")
+    print("  The words are not shown as you type them anywhere else - this is a")
+    print("  local prompt, nothing is sent over the network.\n")
+    phrase = " ".join(input("  Phrase: ").split())
+    if not phrase:
+        print("  Nothing entered.\n")
+        return 1
+
+    try:
+        if not validate_mnemonic(phrase):
+            print("\n  That phrase is not valid - check the words and their order.\n",
+                  file=sys.stderr)
+            return 1
+        address = address_from_mnemonic(phrase)
+        secret = str(keypair_from_mnemonic(phrase))
+    except WalletError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"\n  That phrase is the wallet {address}")
+    try:
+        append_to_env({ENV_MNEMONIC_KEY: phrase, ENV_KEY: secret})
+    except WalletError as exc:
+        print(f"\n  Not saved: {exc}")
+        print("  Remove the existing lines from .env first if you mean to replace them.\n")
+        return 1
+    print("  Saved to .env. The bot will use it from now on.\n")
+    return 0
+
+
+def _show_phrase(args: argparse.Namespace) -> int:
+    from .wallet import configured_address, configured_mnemonic
+
+    phrase = configured_mnemonic()
+    if not phrase:
+        print("\n  This wallet has no seed phrase.")
+        print("  It was created from a raw private key, or imported as one.")
+        print("  Back up SOLANA_PRIVATE_KEY from .env instead.\n")
+        return 1
+
+    print(f"\n  Seed phrase for {configured_address()}:\n")
+    words = phrase.split()
+    for row in range(0, len(words), 4):
+        print("    " + "   ".join(f"{i + 1:>2}. {word:<10}" for i, word in
+                                  enumerate(words[row:row + 4], start=row)))
+    print("\n  Anyone with these words owns the wallet. Paper only.\n")
+    return 0
+
+
+def _withdraw(args: argparse.Namespace, config: BotConfig) -> int:
+    from .execution.live import SolanaRpc, _load_keypair
+    from .wallet import LAMPORTS_PER_SOL, WalletError, is_valid_address, withdraw_sol
+
+    destination = (args.to or "").strip()
+    if not destination:
+        destination = input("\n  Send to which Solana address? ").strip()
+    if not destination:
+        print("  No destination given.\n")
+        return 1
+
+    try:
+        if not is_valid_address(destination):
+            print(f"\n  {destination!r} is not a valid Solana address.\n", file=sys.stderr)
+            return 1
+        keypair = _load_keypair()
+    except Exception as exc:  # noqa: BLE001 - report, never trace
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    rpc = SolanaRpc(config.execution.rpc_url, timeout=config.data.request_timeout)
+    try:
+        balance = rpc.get_balance_lamports(str(keypair.pubkey())) / LAMPORTS_PER_SOL
+    except Exception as exc:  # noqa: BLE001
+        print(f"error: could not read the wallet balance: {exc}", file=sys.stderr)
+        return 1
+
+    amount = (args.amount or "").strip().lower()
+    if not amount:
+        print(f"\n  Wallet holds {balance:.6f} SOL")
+        amount = input("  How much SOL to send? ('all' for everything) ").strip().lower()
+
+    lamports = None
+    if amount not in ("all", "max", ""):
+        try:
+            lamports = int(round(float(amount) * LAMPORTS_PER_SOL))
+        except ValueError:
+            print(f"\n  {amount!r} is not a number.\n", file=sys.stderr)
+            return 1
+
+    sending = "everything (less the fee)" if lamports is None else f"{lamports / LAMPORTS_PER_SOL:.6f} SOL"
+    print(f"\n  Sending {sending}")
+    print(f"  From    {keypair.pubkey()}")
+    print(f"  To      {destination}")
+    print("\n  This moves SOL only. Any memecoins the bot still holds stay put -")
+    print("  close positions first if you want the whole balance out.")
+    if not args.yes:
+        if input("\n  Type SEND to confirm: ").strip() != "SEND":
+            print("  Cancelled.\n")
+            return 1
+
+    try:
+        result = withdraw_sol(rpc, keypair, destination, lamports,
+                              confirm_timeout=config.execution.confirm_timeout_seconds)
+    except WalletError as exc:
+        print(f"\n  {exc}\n", file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        print(f"\n  Withdrawal failed: {exc}\n", file=sys.stderr)
+        return 1
+
+    if result["confirmed"]:
+        print(f"\n  Sent {result['sol']:.6f} SOL.")
+        print(f"  {result['explorer']}\n")
         return 0
+    print(f"\n  Not confirmed: {result['error']}")
+    print(f"  {result['explorer']}\n", file=sys.stderr)
+    return 1
+
+
+def cmd_wallet(args: argparse.Namespace, config: BotConfig) -> int:
+    """Create, inspect, back up, restore or empty the bot's wallet."""
+    from .wallet import WalletError, configured_address, configured_mnemonic
+
+    if getattr(args, "new", False):
+        return _create_wallet(args)
+    if getattr(args, "import_phrase", False):
+        return _import_wallet(args)
+    if getattr(args, "phrase", False):
+        return _show_phrase(args)
+    if getattr(args, "withdraw", False):
+        return _withdraw(args, config)
 
     # ---- show the configured wallet ----
     try:
@@ -203,12 +368,17 @@ def cmd_wallet(args: argparse.Namespace, config: BotConfig) -> int:
     if not address:
         print("\nNo wallet configured.")
         print("  Create one : python -m memebot wallet --new --save")
-        print("  Or set SOLANA_PRIVATE_KEY (base58) / SOLANA_KEYPAIR_PATH in .env\n")
+        print("  Restore one: python -m memebot wallet --import")
+        print("  Or set SOLANA_PRIVATE_KEY / SOLANA_MNEMONIC in .env\n")
         return NO_WALLET
 
     not_ready = False
     print(f"\n  Address   {address}")
     print(f"  Explorer  https://solscan.io/account/{address}")
+    if configured_mnemonic():
+        print("  Backup    seed phrase available (menu: Show seed phrase)")
+    else:
+        print("  Backup    private key only - this wallet has no seed phrase")
 
     from .execution.live import LiveExecutor
 
@@ -248,7 +418,7 @@ def cmd_wallet(args: argparse.Namespace, config: BotConfig) -> int:
 
     armed = summary.get("armed")
     print(f"\n  Live trading {'ARMED' if armed else 'not armed'}"
-          + ("" if armed else " (scripts\\live.ps1 arms it for its own window)"))
+          + ("" if armed else " (starting live trading arms it for that run only)"))
     print()
     return WALLET_NOT_READY if not_ready else 0
 
@@ -416,10 +586,22 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--limit", type=int, default=20)
     scan.set_defaults(func=cmd_scan)
 
-    wallet = sub.add_parser("wallet", help="create or inspect the live trading wallet")
+    wallet = sub.add_parser("wallet", help="create, inspect, back up or empty the wallet")
     wallet.add_argument("--new", action="store_true", help="generate a new wallet")
+    wallet.add_argument("--words", type=int, default=12, choices=[12, 24],
+                        help="seed phrase length for --new (default 12)")
+    wallet.add_argument("--no-phrase", action="store_true",
+                        help="with --new, a raw key with no seed phrase")
     wallet.add_argument("--save", action="store_true",
-                        help="with --new, write the key to .env (never overwrites)")
+                        help="with --new, write it to .env (never overwrites)")
+    wallet.add_argument("--import", dest="import_phrase", action="store_true",
+                        help="restore a wallet from its seed phrase")
+    wallet.add_argument("--phrase", action="store_true", help="show the seed phrase")
+    wallet.add_argument("--withdraw", action="store_true", help="send SOL out of the wallet")
+    wallet.add_argument("--to", help="with --withdraw, the destination address")
+    wallet.add_argument("--amount", help="with --withdraw, SOL to send, or 'all'")
+    wallet.add_argument("-y", "--yes", action="store_true",
+                        help="with --withdraw, skip the confirmation")
     wallet.set_defaults(func=cmd_wallet)
 
     doctor = sub.add_parser("doctor", help="check API connectivity and configuration")

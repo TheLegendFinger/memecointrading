@@ -98,6 +98,21 @@ class FakeDexScreener:
         return [pair] if pair else []
 
 
+@pytest.fixture(autouse=True)
+def isolate_wallet_env(monkeypatch):
+    """Keep the suite independent of whoever is running it.
+
+    A developer with a real .env (a funded wallet, an armed interlock) must get
+    the same results as CI, so wallet variables are cleared and the .env reader
+    is stubbed out for every test. Tests that need these set them themselves -
+    their own monkeypatch runs after this one.
+    """
+    for key in ("SOLANA_PRIVATE_KEY", "SOLANA_MNEMONIC", "SOLANA_KEYPAIR_PATH",
+                "LIVE_TRADING_CONFIRM", "JUPITER_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr("memebot.config.load_dotenv", lambda *args, **kwargs: None)
+
+
 @pytest.fixture
 def storage() -> Storage:
     store = Storage(":memory:")

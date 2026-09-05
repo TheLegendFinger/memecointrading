@@ -53,7 +53,7 @@ MENU: List[Item] = [
     Item("5", "Trade history", "recent fills with fees and P&L", "trades", "LOOK"),
     Item("6", "Scan the market", "what the bot sees right now", "scan", "LOOK"),
 
-    Item("7", "Wallet", "address, balance, or create a burner", "wallet", "SETUP"),
+    Item("7", "Wallet", "create, fund, back up, withdraw", "wallet", "SETUP"),
     Item("8", "Health check", "are the market feeds reachable?", "doctor", "SETUP"),
 
     Item("0", "Quit", "", "quit", ""),
@@ -197,6 +197,36 @@ class Menu:
         handler()
 
     # ---- actions --------------------------------------------------------------
+    def ensure_solana_packages(self) -> bool:
+        """Install solders/base58 if they are missing.
+
+        Anything touching a wallet needs these, so every path that does asks
+        here first rather than failing with an instruction to run pip yourself.
+        """
+        try:
+            import solders  # noqa: F401
+
+            return True
+        except ImportError:
+            pass
+
+        self.output(paint("  Installing the Solana packages (one time, ~20s)...", CYAN))
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-r", "requirements-live.txt",
+             "--quiet", "--disable-pip-version-check"],
+            check=False,
+        )
+        if result.returncode != 0:
+            self.notify("Could not install the Solana packages (solders, base58, mnemonic).", RED)
+            return False
+        try:
+            import solders  # noqa: F401
+
+            return True
+        except ImportError:
+            self.notify("Installed, but the Solana packages still will not import.", RED)
+            return False
+
     def _run_engine(self, live: bool) -> None:
         from .console_view import ConsoleView
         from .engine import TradingEngine
@@ -248,18 +278,8 @@ class Menu:
             self.output(paint(f"  Created {LIVE_CONFIG} with small-wallet settings.", GREEN))
 
         # 2. The Solana packages.
-        try:
-            import solders  # noqa: F401
-        except ImportError:
-            self.output(paint("  Installing the Solana packages...", CYAN))
-            result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", "-r", "requirements-live.txt",
-                 "--quiet", "--disable-pip-version-check"],
-                check=False,
-            )
-            if result.returncode != 0:
-                self.notify("Could not install the Solana packages (solders, base58).", RED)
-                return
+        if not self.ensure_solana_packages():
+            return
 
         # 3. Arming is not trading: it lets the checks below see the real live
         #    path, and it lives only in this process.
@@ -355,19 +375,121 @@ class Menu:
         config_file = self._config_file()
         return (["--config", config_file] if config_file else []) + argv
 
+    WALLET_ITEMS = [
+        ("1", "Show wallet and balance", "wallet_show"),
+        ("2", "Create a new wallet", "wallet_create"),
+        ("3", "Show seed phrase", "wallet_phrase"),
+        ("4", "Restore from a seed phrase", "wallet_import"),
+        ("5", "Withdraw SOL", "wallet_withdraw"),
+    ]
+
     def do_wallet(self) -> None:
+        """A small submenu - creating, funding, backing up and emptying."""
+        if not self.ensure_solana_packages():
+            return
+
+        while True:
+            if self.clear:
+                clear_screen()
+            self.output(paint("\n  WALLET", BOLD, CYAN))
+            self.output(paint("  The bot trades from this wallet, and only this one.\n", GREY))
+            for key, title, _action in self.WALLET_ITEMS:
+                self.output(paint(f"   {key}  ", BOLD, CYAN) + paint(title, WHITE))
+            self.output(paint("   0  ", BOLD, CYAN) + paint("Back", WHITE))
+            self.output("")
+
+            choice = self.ask("Type a number:").lower()
+            if choice in ("0", "q", "b", "back", ""):
+                return
+            entry = next((item for item in self.WALLET_ITEMS if item[0] == choice), None)
+            if entry is None:
+                continue
+            try:
+                getattr(self, f"do_{entry[2]}")()
+            except Exception as exc:  # noqa: BLE001 - never crash out of the menu
+                self.output(paint(f"\n  {type(exc).__name__}: {exc}", RED))
+            self.pause()
+
+    def _wallet_cli(self, **flags) -> int:
         from argparse import Namespace
 
         from .cli import cmd_wallet
 
+        defaults = dict(new=False, save=False, words=12, no_phrase=False,
+                        import_phrase=False, phrase=False, withdraw=False,
+                        to=None, amount=None, yes=False)
+        defaults.update(flags)
+        config = self.load(live=Path(LIVE_CONFIG).exists())
+        return cmd_wallet(Namespace(**defaults), config)
+
+    def do_wallet_show(self) -> None:
         if self.clear:
             clear_screen()
+        code = self._wallet_cli()
+        if code == 2:
+            self.output(paint("\n  Create one with option 2, or restore one with option 4.", GREY))
+
+    def do_wallet_create(self) -> None:
+        if self.clear:
+            clear_screen()
+        from .wallet import ENV_KEY, env_file_has_key
+
+        if env_file_has_key(key=ENV_KEY):
+            self.output(paint("\n  A wallet is already configured.", YELLOW))
+            self.output(paint("  Creating another does not move any funds out of the old one -", GREY))
+            self.output(paint("  back up its seed phrase (option 3) first, or withdraw (option 5).", GREY))
+            self.output(paint("  To replace it, remove SOLANA_PRIVATE_KEY and SOLANA_MNEMONIC", GREY))
+            self.output(paint("  from the .env file yourself.\n", GREY))
+            return
+
+        words = 24 if self.confirm("Use a 24-word phrase instead of 12?") else 12
+        self._wallet_cli(new=True, save=True, words=words)
+
+    def do_wallet_phrase(self) -> None:
+        if self.clear:
+            clear_screen()
+        self.output(paint("\n  This shows the words that control the wallet.", YELLOW))
+        self.output(paint("  Make sure nobody can see your screen, and that you are not "
+                          "sharing it.", GREY))
+        if not self.confirm("Show the seed phrase now?"):
+            self.output(paint("\n  Not shown.", GREY))
+            return
+        self._wallet_cli(phrase=True)
+
+    def do_wallet_import(self) -> None:
+        if self.clear:
+            clear_screen()
+        self._wallet_cli(import_phrase=True)
+
+    def do_wallet_withdraw(self) -> None:
+        if self.clear:
+            clear_screen()
+        self.output(paint("\n  WITHDRAW", BOLD, YELLOW))
+        try:
+            engine_positions = self._open_position_count()
+        except Exception:  # noqa: BLE001
+            engine_positions = 0
+        if engine_positions:
+            self.output(paint(
+                f"  The bot still holds {engine_positions} position(s). Withdrawing moves SOL",
+                YELLOW))
+            self.output(paint("  only - close them first (option 3 on the main menu) to get "
+                              "that value back into SOL.\n", GREY))
+            if not self.confirm("Withdraw anyway?"):
+                return
+        self._wallet_cli(withdraw=True)
+
+    def _open_position_count(self) -> int:
+        from .portfolio import Portfolio
+        from .storage import open_storage
+
         config = self.load(live=Path(LIVE_CONFIG).exists())
-        code = cmd_wallet(Namespace(new=False, save=False), config)
-        if code == 2 and self.confirm("Create a new burner wallet now?"):
-            cmd_wallet(Namespace(new=True, save=True), config)
-        self.output("")
-        self.pause()
+        storage = open_storage(config.state_db)
+        try:
+            return len(Portfolio(storage, config.risk.starting_cash_usd,
+                                 mode=config.mode).positions)
+        finally:
+            storage.close()
 
     def do_quit(self) -> None:  # pragma: no cover - handled in run()
         raise SystemExit(0)

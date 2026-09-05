@@ -3,3 +3,6 @@
 # Solana transaction signing / submission.
 solders>=0.21
 base58>=2.1
+
+# BIP-39 seed phrases, so a wallet can be backed up and restored in Phantom.
+mnemonic>=0.20

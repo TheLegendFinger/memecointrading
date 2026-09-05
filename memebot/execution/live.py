@@ -53,6 +53,15 @@ def _load_keypair():
         except Exception as exc:
             raise LiveExecutionError(f"SOLANA_PRIVATE_KEY is not a valid base58 secret key: {exc}") from exc
 
+    phrase = os.environ.get("SOLANA_MNEMONIC", "").strip()
+    if phrase:
+        from ..wallet import WalletError, keypair_from_mnemonic
+
+        try:
+            return keypair_from_mnemonic(phrase)
+        except WalletError as exc:
+            raise LiveExecutionError(f"SOLANA_MNEMONIC is not usable: {exc}") from exc
+
     path = os.environ.get("SOLANA_KEYPAIR_PATH", "").strip()
     if path:
         try:
@@ -63,7 +72,8 @@ def _load_keypair():
             raise LiveExecutionError(f"Could not read keypair file {path}: {exc}") from exc
 
     raise LiveExecutionError(
-        "No wallet key found. Set SOLANA_PRIVATE_KEY (base58) or SOLANA_KEYPAIR_PATH."
+        "No wallet found. Create one from the menu (Wallet), or set SOLANA_PRIVATE_KEY, "
+        "SOLANA_MNEMONIC or SOLANA_KEYPAIR_PATH in .env."
     )
 
 

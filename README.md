@@ -44,7 +44,7 @@ opens a menu — everything is a number:
     6  Scan the market       what the bot sees right now
 
    SETUP
-    7  Wallet                address, balance, or create a burner
+    7  Wallet                create, fund, back up, withdraw
     8  Health check          are the market feeds reachable?
 
     0  Quit
@@ -238,7 +238,7 @@ curl -X POST "https://your-app.vercel.app/api/cycle?key=YOUR_CRON_SECRET"
 | --- | --- |
 | *(none)* | Opens the numbered menu. Same as `menu`. |
 | `doctor` | Check every API, the database, and the candidate funnel. Start here. |
-| `wallet` | Create or inspect the live trading wallet: address, balance, position size. |
+| `wallet` | The wallet: `--new` (with a seed phrase), `--phrase`, `--import`, `--withdraw --to ADDR --amount 0.1\|all`, or bare to show address and balance. |
 | `run` | The trading loop, with the live display. `--cycles N` to stop after N passes, `--interval S` for the cadence, `--plain` for log lines instead. |
 | `once` | A single cycle, then exit. Good for cron. |
 | `scan` | Score the live market and print the table — never trades. |
@@ -345,6 +345,27 @@ Set `execution.paper_use_live_quotes: true` to price paper fills off **real
 Jupiter routes** instead of the built-in curve — the most realistic setting, at
 the cost of two extra API calls per order. Set `execution.paper_random_seed` for
 reproducible runs.
+
+## The wallet
+
+Menu option **7** does all of it — the bot trades from one wallet and only that
+one.
+
+| | |
+| --- | --- |
+| **Create** | Generates a wallet and a **12 or 24 word seed phrase**, and saves it to `.env`. The phrase is the backup: it restores the same wallet in Phantom or Solflare (`Import wallet` → paste → first account). |
+| **Fund** | Send SOL to the address it shows. Choose the **Solana network** when withdrawing from an exchange. |
+| **Back up** | Shows the seed phrase again, behind a confirmation. Write it on paper — losing the project folder without a written copy loses the funds. |
+| **Restore** | Paste a phrase to move an existing wallet in. Checksum-validated, so a mistyped word is rejected rather than silently becoming a different empty wallet. |
+| **Withdraw** | Sends SOL to any address, an amount or `all`. It refuses to send to itself, to overdraw, or to send at all when the wallet cannot cover the fee. |
+
+Keys are derived on `m/44'/501'/0'/0'` — the path Phantom, Solflare and the
+Solana CLI use — with SLIP-0010 ed25519, checked against the specification's own
+test vectors. A wrong derivation would produce a phrase that restores nothing,
+so that is a test rather than an assumption.
+
+**Withdrawing moves SOL only.** Memecoins the bot is holding stay where they
+are, so close positions first (menu **3**) if you want the whole balance out.
 
 ## Going live
 

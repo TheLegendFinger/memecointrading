@@ -185,14 +185,24 @@ def _run_checks(
     )
 
     def check_price():
-        jupiter.http.get(jupiter.price_url, params={"ids": WSOL_MINT})
+        # Ask the client, not the configured URL directly: it walks the known
+        # endpoints when one has been retired, and reporting a 404 the bot
+        # itself recovers from would be a false alarm.
+        configured = jupiter.price_url
         price = jupiter.price(WSOL_MINT)
-        if price <= 0:
-            return FAIL, (
-                f"{config.data.jupiter_price_url} answered but no SOL price was parsed "
-                "- the response shape changed"
-            )
-        return OK, f"SOL = ${price:,.2f}" + (" (api key in use)" if jupiter.api_key else "")
+
+        if price > 0:
+            detail = f"SOL = ${price:,.2f}"
+            if jupiter.price_url != configured:
+                detail += (f" (via {jupiter.price_url} - {configured} is retired; "
+                           "update data.jupiter_price_url in your config or delete the line)")
+            if jupiter.api_key:
+                detail += " (api key in use)"
+            return OK, detail
+
+        # Nothing worked. Probe directly so the real transport error surfaces.
+        jupiter.http.get(configured, params={"ids": WSOL_MINT})
+        return FAIL, f"{configured} answered but no SOL price was parsed - the shape changed"
 
     price_check = report.run("jupiter price", check_price)
 

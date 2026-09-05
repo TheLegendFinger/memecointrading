@@ -50,19 +50,19 @@ simulated fills. It costs nothing and it is how you find out whether the
 settings suit you.
 
 ```powershell
-scripts\doctor.bat        # is the live market data reachable?
-scripts\run.bat           # paper trading; Ctrl+C to stop
+powershell -ExecutionPolicy Bypass -File scripts\doctor.ps1   # is the market data reachable?
+powershell -ExecutionPolicy Bypass -File scripts\run.ps1      # paper trading; Ctrl+C to stop
 ```
 
 In a second PowerShell window:
 
 ```powershell
 cd ~\memecointrading
-scripts\dashboard.bat     # opens http://localhost:8000
+powershell -ExecutionPolicy Bypass -File scripts\dashboard.ps1   # opens http://localhost:8000
 ```
 
 Let it run. If it never trades, the market is quiet or your settings are
-strict — `scripts\doctor.bat` will tell you which, and the
+strict — `doctor.ps1` will tell you which, and the
 [README](README.md#configuration) says what to loosen.
 
 ## 4. Create the wallet
@@ -183,6 +183,16 @@ the balance drops and it trades smaller.
 | Circuit breakers | Daily loss and drawdown limits halt new entries. |
 
 ## When something goes wrong
+
+**`NativeCommandError` / a red `python.exe :` block** — you are on an older
+version of these scripts. Windows PowerShell treats anything a program writes to
+its error stream as fatal, and Python writes perfectly normal messages there.
+Update and try again:
+
+```powershell
+cd ~\memecointrading
+git pull
+```
 
 **"No wallet configured"** — run step 4.
 

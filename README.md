@@ -27,12 +27,12 @@ That creates a virtual environment, installs everything, and copies
 `config.example.yaml` to `config.yaml`. Then:
 
 ```powershell
-scripts\doctor.bat        REM are the live market feeds reachable?
-scripts\run.bat           REM start paper trading the real market
-scripts\dashboard.bat     REM open the dashboard at localhost:8000
+powershell -ExecutionPolicy Bypass -File scripts\doctor.ps1      # are the feeds reachable?
+powershell -ExecutionPolicy Bypass -File scripts\run.ps1         # paper trade the real market
+powershell -ExecutionPolicy Bypass -File scripts\dashboard.ps1   # dashboard at localhost:8000
 ```
 
-Run `run.bat` in one terminal and `dashboard.bat` in another to watch it work.
+Run `run.ps1` in one terminal and `dashboard.ps1` in another to watch it work.
 
 <details>
 <summary>macOS / Linux</summary>
@@ -88,8 +88,8 @@ a cycle and where the state lives.
 
 ### D — Local only (no cloud, start here)
 
-Nothing to configure. `scripts\run.bat` keeps state in `data/memebot.sqlite3`,
-and `scripts\dashboard.bat` serves the dashboard from that same file.
+Nothing to configure. `scripts\run.ps1` keeps state in `data/memebot.sqlite3`,
+and `scripts\dashboard.ps1` serves the dashboard from that same file.
 
 ### A — Your PC trades, Vercel shows the dashboard
 
@@ -112,7 +112,7 @@ They share one Postgres database.
 3. **Deploy the dashboard** — see [Deploying to Vercel](#deploying-to-vercel)
    below, and set the same `DATABASE_URL` there.
 
-4. **Run the bot** with `scripts\run.bat`. Trades appear on the Vercel dashboard
+4. **Run the bot** with `scripts\run.ps1`. Trades appear on the Vercel dashboard
    within seconds.
 
 To keep it running after you log out, use Task Scheduler:
@@ -122,7 +122,7 @@ Task Scheduler > Create Task
   General : "memebot", tick "Run whether user is logged on or not"
   Triggers: At startup  (+ tick "Repeat task every 5 minutes" as a restart net)
   Actions : Start a program
-            Program : C:\path\to\memecointrading\scripts\run.bat
+            Program : C:\path\to\memecointrading\scripts\run.ps1
             Start in: C:\path\to\memecointrading
   Settings: untick "Stop the task if it runs longer than..."
 ```

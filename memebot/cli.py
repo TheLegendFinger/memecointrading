@@ -21,6 +21,12 @@ from .logging_utils import setup_logging
 from .models import Mode
 from .storage import Storage, open_storage
 
+# `wallet` exit codes - scripts branch on these, so they are part of the API.
+NO_WALLET = 2          # nothing configured; offering to create one is right
+WALLET_NOT_READY = 3   # a wallet exists but cannot trade yet (unfunded, or
+                       # the RPC is unreachable). Never offer to create another:
+                       # the existing one may hold funds.
+
 
 # --------------------------------------------------------------------------------
 # small formatting helpers
@@ -186,8 +192,9 @@ def cmd_wallet(args: argparse.Namespace, config: BotConfig) -> int:
         print("\nNo wallet configured.")
         print("  Create one : python -m memebot wallet --new --save")
         print("  Or set SOLANA_PRIVATE_KEY (base58) / SOLANA_KEYPAIR_PATH in .env\n")
-        return 1
+        return NO_WALLET
 
+    not_ready = False
     print(f"\n  Address   {address}")
     print(f"  Explorer  https://solscan.io/account/{address}")
 
@@ -197,8 +204,11 @@ def cmd_wallet(args: argparse.Namespace, config: BotConfig) -> int:
     try:
         summary = executor.wallet_summary()
     except Exception as exc:  # noqa: BLE001 - a balance lookup failure is informational
-        print(f"  Balance   could not be read: {exc}\n")
-        return 1
+        print(f"\n  Balance   could not be read: {exc}")
+        print("\n  The wallet key is fine - the network is the problem. Check your")
+        print("  internet connection, or set MEMEBOT_RPC_URL in .env to a private RPC.")
+        print("  Do NOT create another wallet; this one may already hold funds.\n")
+        return WALLET_NOT_READY
 
     sol = summary["sol_balance"]
     print(f"  RPC       {summary['rpc_url']}")
@@ -214,19 +224,21 @@ def cmd_wallet(args: argparse.Namespace, config: BotConfig) -> int:
         size = min(config.risk.max_position_usd, available * config.risk.position_size_pct)
         if available <= 0:
             print("\n  Not enough SOL to trade. Send some to the address above.")
+            not_ready = True
         elif size < config.risk.min_position_usd:
             print(f"\n  Too small to trade: a position would be {_money(size)}, below the "
                   f"{_money(config.risk.min_position_usd)} minimum.")
             print("  Add more SOL, or lower risk.min_position_usd in your config.")
+            not_ready = True
         else:
             print(f"\n  At the current settings each position would be about {_money(size)}, "
                   f"up to {config.risk.max_open_positions} at once.")
 
     armed = summary.get("armed")
     print(f"\n  Live trading {'ARMED' if armed else 'not armed'}"
-          + ("" if armed else " (set LIVE_TRADING_CONFIRM in .env to enable)"))
+          + ("" if armed else " (scripts\\live.ps1 arms it for its own window)"))
     print()
-    return 0
+    return WALLET_NOT_READY if not_ready else 0
 
 
 def cmd_doctor(args: argparse.Namespace, config: BotConfig) -> int:

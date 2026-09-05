@@ -210,3 +210,47 @@ def test_an_explicit_db_flag_still_wins_over_the_environment(tmp_path, monkeypat
     monkeypatch.setenv("DATABASE_URL", "postgres://cloud/db")
     cfg = load_config(None, {"state_db": str(tmp_path / "forced.sqlite3")})
     assert cfg.state_db.endswith("forced.sqlite3")
+
+
+# ---- wallet command exit codes (the PowerShell scripts branch on these) --------
+def test_wallet_reports_no_wallet_with_a_distinct_code(monkeypatch, capsys):
+    """2 means 'nothing configured' - only then may a script offer to create one."""
+    import memebot.config as config_module
+
+    monkeypatch.delenv("SOLANA_PRIVATE_KEY", raising=False)
+    monkeypatch.delenv("SOLANA_KEYPAIR_PATH", raising=False)
+    # A developer's own .env must not decide the result of this test.
+    monkeypatch.setattr(config_module, "load_dotenv", lambda *a, **k: None)
+
+    assert cli.main(["wallet"]) == cli.NO_WALLET
+    assert "No wallet configured" in capsys.readouterr().out
+
+
+def test_wallet_reports_an_unreadable_balance_distinctly(monkeypatch, capsys):
+    """3 means 'a wallet exists but cannot trade' - never offer to create another."""
+    import memebot.config as config_module
+    import memebot.wallet as wallet_module
+    from memebot.execution import live as live_module
+
+    monkeypatch.setattr(config_module, "load_dotenv", lambda *a, **k: None)
+    monkeypatch.setattr(wallet_module, "configured_address", lambda: "Wallet1111")
+
+    class Broken:
+        def __init__(self, *a, **k):
+            pass
+
+        def wallet_summary(self):
+            raise RuntimeError("RPC unreachable")
+
+    monkeypatch.setattr(live_module, "LiveExecutor", Broken)
+
+    assert cli.main(["wallet"]) == cli.WALLET_NOT_READY
+    output = capsys.readouterr().out
+    assert "could not be read" in output
+    assert "Do NOT create another wallet" in output
+
+
+def test_the_wallet_exit_codes_are_distinct():
+    """The scripts tell these apart; they must never collide with success."""
+    assert cli.NO_WALLET != cli.WALLET_NOT_READY
+    assert 0 not in (cli.NO_WALLET, cli.WALLET_NOT_READY)

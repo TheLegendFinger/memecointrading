@@ -1,30 +1,29 @@
 # Show the live trading wallet: address, balance, and what it can trade with.
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\wallet.ps1
-#   powershell -ExecutionPolicy Bypass -File scripts\wallet.ps1 -New
+#   powershell -ExecutionPolicy Bypass -File scripts\wallet.ps1 -New -Save
 
 param([switch]$New, [switch]$Save)
 
-$ErrorActionPreference = "Stop"
-Set-Location (Split-Path $PSScriptRoot -Parent)
-$py = ".\.venv\Scripts\python.exe"
+. (Join-Path $PSScriptRoot '_common.ps1')
 
-if (-not (Test-Path $py)) {
-    Write-Host "  Run scripts\setup.ps1 first." -ForegroundColor Red
-    exit 1
+Test-Venv
+
+if (-not (Install-LiveExtras)) {
+    Write-Fail "Could not install the Solana packages. Try running this by hand to see why:`n    $script:Py -m pip install -r requirements-live.txt"
 }
 
-& $py -c "import solders" 2>$null
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "  Installing the Solana packages..." -ForegroundColor Cyan
-    & $py -m pip install -r requirements-live.txt --quiet
-}
-
-$config = @()
-if (Test-Path "config.live.yaml") { $config = @("--config", "config.live.yaml") }
+$configArgs = @()
+if (Test-Path -LiteralPath 'config.live.yaml') { $configArgs = @('--config', 'config.live.yaml') }
 
 if ($New) {
-    if ($Save) { & $py -m memebot wallet --new --save } else { & $py -m memebot wallet --new }
-} else {
-    & $py -m memebot @config wallet
+    if ($Save) {
+        Invoke-Memebot @configArgs wallet --new --save
+    } else {
+        Invoke-Memebot @configArgs wallet --new
+    }
+    exit $LASTEXITCODE
 }
+
+Invoke-Memebot @configArgs wallet
+exit $LASTEXITCODE

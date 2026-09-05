@@ -20,15 +20,13 @@ from typing import Callable, List, Optional
 
 from . import __version__
 from .config import BotConfig, load_config
-from .models import Mode
 from .ui import (
     BOLD, CYAN, DIM, GREEN, GREY, RED, RESET, WHITE, YELLOW,
     Glyphs, box, clear_screen, money, paint, pct,
 )
 
-PAPER_CONFIG = "config.yaml"
-LIVE_CONFIG = "config.live.yaml"
-LIVE_CONFIG_EXAMPLE = "config.live.example.yaml"
+CONFIG = "config.yaml"
+CONFIG_EXAMPLE = "config.example.yaml"
 CONFIRM_ENV = "LIVE_TRADING_CONFIRM"
 CONFIRM_VALUE = "I_UNDERSTAND_THE_RISK"
 
@@ -44,9 +42,8 @@ class Item:
 
 
 MENU: List[Item] = [
-    Item("1", "Paper trade", "practice on the real market, no real money",
-         "paper", "TRADE", GREEN),
-    Item("2", "Live trade", "REAL money on Solana", "live", "TRADE", YELLOW),
+    Item("1", "Start trading", "REAL money on Solana", "trade", "TRADE", YELLOW),
+    Item("2", "Dry run", "decide and log, place no orders", "dry_run", "TRADE", GREEN),
     Item("3", "Close all positions", "sell everything at market", "liquidate", "TRADE", RED),
 
     Item("4", "Portfolio", "equity, open positions, win rate", "status", "LOOK"),
@@ -77,15 +74,13 @@ class Menu:
         self.message_style: str = ""
 
     # ---- config ---------------------------------------------------------------
-    def _config_file(self, live: bool = False) -> Optional[str]:
+    def _config_file(self) -> Optional[str]:
         if self.config_path:
             return self.config_path
-        candidate = LIVE_CONFIG if live else PAPER_CONFIG
-        return candidate if Path(candidate).exists() else None
+        return CONFIG if Path(CONFIG).exists() else None
 
-    def load(self, live: bool = False) -> BotConfig:
-        overrides = {"mode": Mode.LIVE.value} if live else {}
-        return load_config(self._config_file(live), overrides)
+    def load(self) -> BotConfig:
+        return load_config(self._config_file())
 
     # ---- rendering ------------------------------------------------------------
     def _state_line(self) -> str:
@@ -97,7 +92,7 @@ class Menu:
 
             storage = open_storage(config.state_db)
             try:
-                portfolio = Portfolio(storage, config.risk.starting_cash_usd, mode=config.mode)
+                portfolio = Portfolio(storage, config.risk.starting_cash_usd)
                 stats = portfolio.stats()
             finally:
                 storage.close()
@@ -105,7 +100,7 @@ class Menu:
             return paint(f"  (could not read the portfolio: {exc})", GREY)
 
         if stats["closed_trades"] == 0 and stats["open_positions"] == 0 and not stats["realized_pnl_usd"]:
-            return paint("  No trades yet. Press 1 to start paper trading.", GREY)
+            return paint("  No trades yet. Press 2 for a dry run, or 1 to trade.", GREY)
 
         change = stats["total_return_pct"]
         colour = GREEN if change > 0 else (RED if change < 0 else GREY)
@@ -125,12 +120,7 @@ class Menu:
         if self.clear:
             clear_screen()
 
-        live_file = Path(LIVE_CONFIG).exists()
-        badge = "LIVE CONFIGURED" if live_file else "PAPER"
-        badge_colour = YELLOW if live_file else GREY
-
-        self.output(paint(box(f"memebot {__version__}", badge, glyphs=self.glyphs),
-                          CYAN if not live_file else YELLOW))
+        self.output(paint(box(f"memebot {__version__}", "LIVE", glyphs=self.glyphs), YELLOW))
         self.output("")
         self.output(self._state_line())
         self.output("")
@@ -227,12 +217,13 @@ class Menu:
             self.notify("Installed, but the Solana packages still will not import.", RED)
             return False
 
-    def _run_engine(self, live: bool) -> None:
+    def _run_engine(self, dry_run: bool = False) -> None:
         from .console_view import ConsoleView
         from .engine import TradingEngine
         from .logging_utils import setup_logging
 
-        config = self.load(live=live)
+        config = self.load()
+        config.dry_run = dry_run
         view = ConsoleView(output=self.output)
 
         # With the live display on, log lines would scribble over the frame, so
@@ -247,8 +238,9 @@ class Menu:
             return
 
         self.output("")
-        self.output(paint(f"  Starting in {config.mode} mode. First scan takes a few "
-                          "seconds...", GREY))
+        if dry_run:
+            self.output(paint("  Dry run: it decides and logs, but places no orders.", GREEN))
+        self.output(paint("  First scan takes a few seconds...", GREY))
         self.output(paint("  Ctrl+C stops it and returns to the menu.", GREY))
         try:
             engine.run()
@@ -256,57 +248,24 @@ class Menu:
             engine.storage.close()
         self.notify("Stopped. Positions are still open - use 3 to close them.", GREY)
 
-    def do_paper(self) -> None:
+    def do_dry_run(self) -> None:
+        """Everything the real thing does, except sending orders."""
         if self.clear:
             clear_screen()
-        self.output(paint("\n  PAPER TRADING", BOLD, GREEN))
-        self.output(paint("  Live market data, simulated fills. No money moves.\n", GREY))
-        self._run_engine(live=False)
+        self.output(paint("\n  DRY RUN", BOLD, GREEN))
+        self.output(paint("  Live market, real scoring, real sizing - no orders sent.\n", GREY))
+        if not self._prepare(require_wallet=False):
+            return
+        self._run_engine(dry_run=True)
 
-    def do_live(self) -> None:
+    def do_trade(self) -> None:
         if self.clear:
             clear_screen()
-        self.output(paint("\n  LIVE TRADING", BOLD, YELLOW))
+        self.output(paint("\n  START TRADING", BOLD, YELLOW))
         self.output("")
-
-        # 1. A live config, separate from the paper one.
-        if not Path(LIVE_CONFIG).exists():
-            if not Path(LIVE_CONFIG_EXAMPLE).exists():
-                self.notify(f"{LIVE_CONFIG_EXAMPLE} is missing from this folder.", RED)
-                return
-            Path(LIVE_CONFIG).write_text(Path(LIVE_CONFIG_EXAMPLE).read_text())
-            self.output(paint(f"  Created {LIVE_CONFIG} with small-wallet settings.", GREEN))
-
-        # 2. The Solana packages.
-        if not self.ensure_solana_packages():
+        if not self._prepare(require_wallet=True):
             return
 
-        # 3. Arming is not trading: it lets the checks below see the real live
-        #    path, and it lives only in this process.
-        os.environ[CONFIRM_ENV] = CONFIRM_VALUE
-
-        # 4. The wallet has to exist and be able to pay for a swap.
-        from .cli import NO_WALLET, cmd_wallet
-        from argparse import Namespace
-
-        config = self.load(live=True)
-        code = cmd_wallet(Namespace(new=False, save=False), config)
-        if code == NO_WALLET:
-            self.output("")
-            if not self.confirm("No wallet yet. Create a burner wallet now?"):
-                self.notify("Live trading needs a wallet.", GREY)
-                return
-            cmd_wallet(Namespace(new=True, save=True), config)
-            self.notify("Send SOL to that address, then choose 2 again.", YELLOW)
-            self.pause()
-            return
-        if code != 0:
-            self.output("")
-            self.notify("The wallet cannot trade yet - see above.", YELLOW)
-            self.pause()
-            return
-
-        # 5. The last gate.
         self.output("")
         self.output(paint("  You are about to trade REAL money.", BOLD, YELLOW))
         self.output(paint("  This bot buys brand-new memecoins. Many go to zero. It can lose", GREY))
@@ -316,16 +275,56 @@ class Menu:
             self.notify("Not started.", GREY)
             return
 
-        self._run_engine(live=True)
+        self._run_engine()
+
+    def _prepare(self, require_wallet: bool) -> bool:
+        """Config, packages, interlock and wallet - the things a run needs."""
+        if not Path(CONFIG).exists() and Path(CONFIG_EXAMPLE).exists():
+            Path(CONFIG).write_text(Path(CONFIG_EXAMPLE).read_text())
+            self.output(paint(f"  Created {CONFIG} from the example.", GREEN))
+
+        if not self.ensure_solana_packages():
+            return False
+
+        # Arming is not trading: it lets the checks below see the real path, and
+        # it lives only in this process, so quitting the menu disarms it.
+        os.environ[CONFIRM_ENV] = CONFIRM_VALUE
+
+        if not require_wallet:
+            return True
+
+        from argparse import Namespace
+
+        from .cli import NO_WALLET, cmd_wallet
+
+        config = self.load()
+        code = cmd_wallet(Namespace(new=False, save=False, words=12, no_phrase=False,
+                                    import_phrase=False, phrase=False, withdraw=False,
+                                    to=None, amount=None, yes=False), config)
+        if code == NO_WALLET:
+            self.output("")
+            if not self.confirm("No wallet yet. Create one now?"):
+                self.notify("Trading needs a wallet.", GREY)
+                return False
+            cmd_wallet(Namespace(new=True, save=True, words=12, no_phrase=False,
+                                 import_phrase=False, phrase=False, withdraw=False,
+                                 to=None, amount=None, yes=False), config)
+            self.notify("Send SOL to that address, then choose 1 again.", YELLOW)
+            self.pause()
+            return False
+        if code != 0:
+            self.output("")
+            self.notify("The wallet cannot trade yet - see above.", YELLOW)
+            self.pause()
+            return False
+        return True
 
     def do_liquidate(self) -> None:
         from .engine import TradingEngine
         from .logging_utils import setup_logging
 
-        live = Path(LIVE_CONFIG).exists() and self.confirm("Close LIVE positions? (no = paper)")
-        config = self.load(live=live)
-        if live:
-            os.environ[CONFIRM_ENV] = CONFIRM_VALUE
+        config = self.load()
+        os.environ[CONFIRM_ENV] = CONFIRM_VALUE
         setup_logging(config.log_level, None)
 
         engine = TradingEngine(config)
@@ -419,7 +418,7 @@ class Menu:
                         import_phrase=False, phrase=False, withdraw=False,
                         to=None, amount=None, yes=False)
         defaults.update(flags)
-        config = self.load(live=Path(LIVE_CONFIG).exists())
+        config = self.load()
         return cmd_wallet(Namespace(**defaults), config)
 
     def do_wallet_show(self) -> None:
@@ -483,11 +482,10 @@ class Menu:
         from .portfolio import Portfolio
         from .storage import open_storage
 
-        config = self.load(live=Path(LIVE_CONFIG).exists())
+        config = self.load()
         storage = open_storage(config.state_db)
         try:
-            return len(Portfolio(storage, config.risk.starting_cash_usd,
-                                 mode=config.mode).positions)
+            return len(Portfolio(storage, config.risk.starting_cash_usd).positions)
         finally:
             storage.close()
 

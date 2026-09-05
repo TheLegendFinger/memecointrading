@@ -18,7 +18,6 @@ from . import __version__
 from .config import BotConfig, load_config
 from .engine import TradingEngine
 from .logging_utils import setup_logging
-from .models import Mode
 from .storage import Storage, open_storage
 
 # `wallet` exit codes - scripts branch on these, so they are part of the API.
@@ -71,9 +70,15 @@ def cmd_run(args: argparse.Namespace, config: BotConfig) -> int:
     setup_logging(config.log_level, config.log_file, console=not view.active)
     engine = _build_engine(config, on_cycle=view if view.active else None)
 
-    if config.mode == Mode.LIVE.value and not args.yes:
-        wallet = getattr(engine.executor, "wallet_address", "<unknown>")
-        print("\n*** LIVE TRADING ***")
+    # A dry run sends nothing, so there is nothing to confirm and no wallet to
+    # look up.
+    if not args.yes and not config.dry_run:
+        try:
+            wallet = engine.executor.wallet_address
+        except Exception as exc:  # noqa: BLE001 - report, do not trace
+            print(f"\nerror: no usable wallet - {exc}", file=sys.stderr)
+            return 1
+        print("\n*** REAL MONEY ***")
         print(f"  wallet : {wallet}")
         print(f"  rpc    : {config.execution.rpc_url}")
         print(f"  size   : up to {_money(config.risk.max_position_usd)} per position, "
@@ -418,7 +423,7 @@ def cmd_wallet(args: argparse.Namespace, config: BotConfig) -> int:
 
     armed = summary.get("armed")
     print(f"\n  Live trading {'ARMED' if armed else 'not armed'}"
-          + ("" if armed else " (starting live trading arms it for that run only)"))
+          + ("" if armed else " (starting the bot arms it for that run only)"))
     print()
     return WALLET_NOT_READY if not_ready else 0
 
@@ -427,7 +432,7 @@ def cmd_doctor(args: argparse.Namespace, config: BotConfig) -> int:
     """Check every dependency and say whether the bot can actually trade."""
     from .doctor import FAIL, format_report, run_checks
 
-    print(f"\nmemebot {__version__} health check ({config.mode} mode)\n")
+    print(f"\nmemebot {__version__} health check\n")
     report = run_checks(config, deep=not args.quick)
     print(format_report(report))
 
@@ -447,14 +452,14 @@ def cmd_status(args: argparse.Namespace, config: BotConfig) -> int:
     storage = open_storage(config.state_db)
     from .portfolio import Portfolio
 
-    portfolio = Portfolio(storage, config.risk.starting_cash_usd, mode=config.mode)
+    portfolio = Portfolio(storage, config.risk.starting_cash_usd)
     stats = portfolio.stats()
 
     if args.json:
         print(json.dumps(stats, indent=2, default=str))
         return 0
 
-    print(f"\nmemebot {__version__} | mode={config.mode} | db={config.state_db}")
+    print(f"\nmemebot {__version__} | db={config.state_db}")
     print("-" * 62)
     print(f"  equity            {_money(stats['equity_usd'])}")
     print(f"  cash              {_money(stats['cash_usd'])}")
@@ -528,19 +533,19 @@ def cmd_liquidate(args: argparse.Namespace, config: BotConfig) -> int:
 
 
 def cmd_reset(args: argparse.Namespace, config: BotConfig) -> int:
-    if config.mode == Mode.LIVE.value:
-        print("Refusing to reset state while mode=live (your on-chain balances would not match).",
-              file=sys.stderr)
-        return 1
+    print("\n  This wipes the bot's record of its own trades and positions.")
+    print("  It does NOT move any funds - the wallet and whatever it holds are")
+    print("  untouched, so the bot will no longer know about tokens it bought.")
+    print("  Close positions first if you want a clean slate.\n")
     if not args.yes:
-        answer = input(f"Wipe all paper state in {config.state_db}? [y/N] ").strip().lower()
+        answer = input(f"Wipe the trade history in {config.state_db}? [y/N] ").strip().lower()
         if answer not in ("y", "yes"):
             print("Aborted.")
             return 1
     storage = open_storage(config.state_db)
     storage.reset()
     storage.close()
-    print(f"State reset. Starting cash is {_money(config.risk.starting_cash_usd)}.")
+    print("State reset. The wallet balance is read fresh on the next cycle.")
     return 0
 
 
@@ -559,8 +564,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"memebot {__version__}")
     parser.add_argument("-c", "--config", help="path to a YAML or JSON config file")
-    parser.add_argument("--mode", choices=[Mode.PAPER.value, Mode.LIVE.value],
-                        help="override the trading mode")
     parser.add_argument("--db", help="override the state database path")
     parser.add_argument("--log-level", help="DEBUG, INFO, WARNING, ERROR")
     parser.add_argument("--dry-run", action="store_true",
@@ -577,9 +580,15 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("-y", "--yes", action="store_true", help="skip the live-trading confirmation")
     run.add_argument("--plain", action="store_true",
                      help="plain log lines instead of the live display")
+    # Also accepted after the subcommand, so `run --dry-run` works as naturally
+    # as `--dry-run run`.
+    run.add_argument("--dry-run", dest="run_dry_run", action="store_true",
+                     help="evaluate and log decisions without sending any order")
     run.set_defaults(func=cmd_run)
 
     once = sub.add_parser("once", help="run a single cycle and exit")
+    once.add_argument("--dry-run", dest="run_dry_run", action="store_true",
+                      help="evaluate and log decisions without sending any order")
     once.set_defaults(func=cmd_once)
 
     scan = sub.add_parser("scan", help="show scored candidates without trading")
@@ -643,10 +652,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         args.func = cmd_menu
 
     overrides: Dict[str, Any] = {
-        "mode": args.mode,
         "state_db": args.db,
         "log_level": args.log_level,
-        "dry_run": True if args.dry_run else None,
+        "dry_run": True if (args.dry_run or getattr(args, "run_dry_run", False)) else None,
     }
     if getattr(args, "interval", None):
         overrides["poll_interval_seconds"] = args.interval

@@ -22,9 +22,8 @@ DAY_KEY = "day_start"
 
 
 class Portfolio:
-    def __init__(self, storage: Storage, starting_cash_usd: float = 1000.0, mode: str = "paper") -> None:
+    def __init__(self, storage: Storage, starting_cash_usd: float = 1000.0) -> None:
         self.storage = storage
-        self.mode = mode
         self.starting_cash = float(storage.get_state(START_KEY, starting_cash_usd))
         if storage.get_state(START_KEY) is None:
             storage.set_state(START_KEY, self.starting_cash)
@@ -142,7 +141,7 @@ class Portfolio:
                     self.storage.save_position(pos)
 
         self._persist_cash()
-        self.storage.record_fill(fill, realized_pnl=realized, mode=self.mode)
+        self.storage.record_fill(fill, realized_pnl=realized)
         return realized
 
     # ---- reporting -------------------------------------------------------------

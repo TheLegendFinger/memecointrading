@@ -1,8 +1,9 @@
-"""Paper execution: realistic simulated fills, no funds at risk.
+"""A simulated executor, for tests only.
 
-The point of paper mode is not "assume you get the mid price". Memecoin swaps
-lose real money to price impact, aggregator/pool fees, priority fees and
-outright failed transactions, so the simulator models all four:
+This is not a trading mode - the bot trades for real and nothing else. It is
+the test double that lets the engine, risk and portfolio tests run without a
+wallet, a network or any money, and it stays deliberately realistic so those
+tests mean something. It models:
 
   * price impact from a constant-product curve using the pool's own liquidity
     (or, optionally, a real Jupiter route quote),
@@ -20,23 +21,38 @@ import random
 import uuid
 from typing import Optional
 
-from ..config import BotConfig
-from ..models import Fill, Order, Side
-from .base import Executor
+from memebot.config import BotConfig
+from memebot.models import Fill, Order, Side
+from memebot.execution.base import Executor
 
 log = logging.getLogger(__name__)
 
 
-class PaperExecutor(Executor):
-    mode = "paper"
+class SimulatedExecutor(Executor):
+    """Fills orders against a model instead of a blockchain."""
 
-    def __init__(self, config: BotConfig, data=None, jupiter=None, rng: Optional[random.Random] = None) -> None:
+    mode = "simulated"
+
+    def __init__(
+        self,
+        config: BotConfig,
+        data=None,
+        jupiter=None,
+        rng: Optional[random.Random] = None,
+        failure_rate: float = 0.0,
+        base_slippage_bps: int = 30,
+        use_live_quotes: bool = False,
+    ) -> None:
         self.config = config
         self.cfg = config.execution
         self.data = data
         self.jupiter = jupiter
-        seed = getattr(self.cfg, "paper_random_seed", None)
-        self.rng = rng or (random.Random(seed) if seed is not None else random.Random())
+        # Simulation knobs live here rather than in the shipped config: the real
+        # bot has no such settings, because it does not simulate anything.
+        self.failure_rate = failure_rate
+        self.base_slippage_bps = base_slippage_bps
+        self.use_live_quotes = use_live_quotes
+        self.rng = rng or random.Random()
 
     # ---- fill model ------------------------------------------------------------
     def _impact_fraction(self, order: Order) -> float:
@@ -58,7 +74,7 @@ class PaperExecutor(Executor):
 
     def _quoted_impact(self, order: Order) -> Optional[float]:
         """Price impact from a live Jupiter route, if enabled and reachable."""
-        if not getattr(self.cfg, "paper_use_live_quotes", False) or self.jupiter is None:
+        if not self.use_live_quotes or self.jupiter is None:
             return None
         try:
             quote_mint = self.cfg.quote_mint
@@ -83,7 +99,7 @@ class PaperExecutor(Executor):
         impact = self._quoted_impact(order)
         if impact is None:
             impact = self._impact_fraction(order)
-        base = self.cfg.paper_base_slippage_bps / 10_000.0
+        base = self.base_slippage_bps / 10_000.0
         # A little randomness so backtest-style runs are not suspiciously smooth.
         jitter = base * self.rng.uniform(-0.35, 0.75)
         return max(0.0, base + jitter + impact)
@@ -104,7 +120,7 @@ class PaperExecutor(Executor):
         if order.side is Side.SELL and order.token_amount <= 0:
             return Fill(order=order, ok=False, error="sell order has no size")
 
-        if self.cfg.paper_failure_rate > 0 and self.rng.random() < self.cfg.paper_failure_rate:
+        if self.failure_rate > 0 and self.rng.random() < self.failure_rate:
             return Fill(order=order, ok=False, error="transaction failed (simulated)")
 
         slip = self._slippage_fraction(order)
@@ -150,6 +166,6 @@ class PaperExecutor(Executor):
 
     def describe(self) -> str:
         return (
-            f"paper (fee {self.cfg.fee_bps}bps, base slip {self.cfg.paper_base_slippage_bps}bps, "
+            f"simulated (fee {self.cfg.fee_bps}bps, base slip {self.base_slippage_bps}bps, "
             f"fees ${self.cfg.network_fee_usd + self.cfg.priority_fee_usd:.2f}/swap)"
         )

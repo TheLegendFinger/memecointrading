@@ -11,7 +11,7 @@ import random
 import pytest
 
 from memebot.engine import TradingEngine
-from memebot.execution.paper import PaperExecutor
+from tests.fakes import SimulatedExecutor
 from memebot.storage import Storage
 from tests.conftest import FakeDexScreener, make_pair
 
@@ -33,7 +33,7 @@ def engine(config, tmp_path):
 
     market = FakeDexScreener([hot("MOON"), hot("RUG"), hot("FLAT")])
     storage = Storage(config.state_db)
-    executor = PaperExecutor(config, data=market, rng=random.Random(2024))
+    executor = SimulatedExecutor(config, data=market, rng=random.Random(2024))
     return TradingEngine(config, storage=storage, data=market, executor=executor), market
 
 
@@ -87,7 +87,7 @@ def test_a_losing_session_stays_within_the_risk_budget(config, tmp_path):
     config.strategy.max_new_positions_per_cycle = 3
 
     market = FakeDexScreener([hot(f"BAD{i}") for i in range(3)])
-    executor = PaperExecutor(config, data=market, rng=random.Random(7))
+    executor = SimulatedExecutor(config, data=market, rng=random.Random(7))
     bot = TradingEngine(config, storage=Storage(config.state_db), data=market, executor=executor)
 
     bot.run_cycle()
@@ -108,7 +108,7 @@ def test_trading_halts_after_a_large_drawdown(config, tmp_path):
     config.risk.reentry_cooldown_minutes = 0.0
 
     market = FakeDexScreener([hot("DOOM")])
-    executor = PaperExecutor(config, data=market, rng=random.Random(3))
+    executor = SimulatedExecutor(config, data=market, rng=random.Random(3))
     bot = TradingEngine(config, storage=Storage(config.state_db), data=market, executor=executor)
 
     bot.run_cycle()

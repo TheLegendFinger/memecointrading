@@ -29,11 +29,24 @@ def healthy_clients():
     return dex, jup
 
 
+@pytest.fixture
+def armed(monkeypatch):
+    """An armed, working executor - so checks under test are the ones failing."""
+    monkeypatch.setenv("LIVE_TRADING_CONFIRM", "I_UNDERSTAND_THE_RISK")
+    monkeypatch.setattr("memebot.execution.live.LiveExecutor.preflight", lambda self: None)
+    monkeypatch.setattr("memebot.execution.live.LiveExecutor.describe",
+                        lambda self: "live via Jupiter (test)")
+
+
 def status_of(report, name):
     return next(c.status for c in report.checks if c.name == name)
 
 
-def test_everything_reachable_reports_healthy(config):
+def test_everything_reachable_reports_healthy(config, monkeypatch):
+    monkeypatch.setenv("LIVE_TRADING_CONFIRM", "I_UNDERSTAND_THE_RISK")
+    monkeypatch.setattr("memebot.execution.live.LiveExecutor.preflight", lambda self: None)
+    monkeypatch.setattr("memebot.execution.live.LiveExecutor.describe",
+                        lambda self: "live via Jupiter (test)")
     dex, jup = healthy_clients()
     config.filters.min_liquidity_usd = 1_000       # let the sample pair through
     config.filters.min_volume_h24_usd = 1_000
@@ -49,7 +62,7 @@ def test_everything_reachable_reports_healthy(config):
     assert "SOL = $152.31" in format_report(report)
 
 
-def test_unreachable_dexscreener_is_a_failure_with_the_real_cause(config):
+def test_unreachable_dexscreener_is_a_failure_with_the_real_cause(config, armed):
     dex = DexScreenerClient(http=FakeHttp({"/": HttpError("Tunnel connection failed: 403", 403)}))
     _dex, jup = healthy_clients()
 
@@ -61,7 +74,7 @@ def test_unreachable_dexscreener_is_a_failure_with_the_real_cause(config):
     assert "403" in search.detail, "the underlying transport error must reach the report"
 
 
-def test_price_endpoint_shape_change_is_diagnosed(config):
+def test_price_endpoint_shape_change_is_diagnosed(config, armed):
     dex, _jup = healthy_clients()
     # Endpoint answers 200 but with a shape we cannot read.
     jup = JupiterClient(http=FakeHttp({"price": {"unexpected": "shape"}}))
@@ -72,7 +85,7 @@ def test_price_endpoint_shape_change_is_diagnosed(config):
     assert "shape changed" in price.detail
 
 
-def test_filters_rejecting_everything_is_a_warning_not_a_failure(config):
+def test_filters_rejecting_everything_is_a_warning_not_a_failure(config, armed):
     dex, jup = healthy_clients()
     config.filters.min_liquidity_usd = 10_000_000_000  # nothing can pass
 
@@ -83,7 +96,7 @@ def test_filters_rejecting_everything_is_a_warning_not_a_failure(config):
     assert report.healthy, "a too-strict filter is a config problem, not an outage"
 
 
-def test_min_score_too_high_is_reported_with_the_best_score(config):
+def test_min_score_too_high_is_reported_with_the_best_score(config, armed):
     dex, jup = healthy_clients()
     config.filters.min_liquidity_usd = 1_000
     config.filters.min_volume_h24_usd = 1_000
@@ -95,26 +108,18 @@ def test_min_score_too_high_is_reported_with_the_best_score(config):
     assert "lower min_score" in pipeline.detail
 
 
-def test_paper_mode_reports_no_funds_at_risk(config):
-    dex, jup = healthy_clients()
-    report = run_checks(config, deep=False, data=dex, jupiter=jup)
-    live = next(c for c in report.checks if c.name == "live execution")
-    assert live.status == OK
-    assert "no funds at risk" in live.detail
-
-
-def test_live_mode_without_the_interlock_fails(config, monkeypatch):
+def test_execution_without_the_interlock_fails(config, monkeypatch):
+    """There is no practice mode, so this check always applies."""
     monkeypatch.delenv("LIVE_TRADING_CONFIRM", raising=False)
-    config.mode = "live"
     dex, jup = healthy_clients()
 
     report = run_checks(config, deep=False, data=dex, jupiter=jup)
-    live = next(c for c in report.checks if c.name == "live execution")
-    assert live.status == FAIL
-    assert "not armed" in live.detail
+    execution = next(c for c in report.checks if c.name == "execution")
+    assert execution.status == FAIL
+    assert "not armed" in execution.detail
 
 
-def test_state_store_is_probed(config):
+def test_state_store_is_probed(config, armed):
     dex, jup = healthy_clients()
     report = run_checks(config, deep=False, data=dex, jupiter=jup)
     state = next(c for c in report.checks if c.name == "state store")
@@ -122,7 +127,7 @@ def test_state_store_is_probed(config):
     assert "0 open position" in state.detail
 
 
-def test_report_formatting_lists_every_check(config):
+def test_report_formatting_lists_every_check(config, armed):
     dex, jup = healthy_clients()
     text = format_report(run_checks(config, deep=False, data=dex, jupiter=jup))
     for name in ("config", "state store", "dexscreener search", "jupiter price"):

@@ -11,13 +11,13 @@ import random
 import pytest
 
 from memebot.engine import TradingEngine
-from memebot.execution.paper import PaperExecutor
+from tests.fakes import SimulatedExecutor
 from memebot.portfolio import Portfolio
 from memebot.storage import Storage
 from tests.conftest import FakeDexScreener, make_pair
 
 
-class WalletExecutor(PaperExecutor):
+class WalletExecutor(SimulatedExecutor):
     """A paper executor that reports a wallet balance, like the live one does."""
 
     mode = "live"
@@ -31,7 +31,6 @@ class WalletExecutor(PaperExecutor):
 
 
 def build(config, cash, pairs=None, seed=3):
-    config.mode = "live"
     market = FakeDexScreener(pairs or [])
     storage = Storage(":memory:")
     executor = WalletExecutor(config, data=market, rng=random.Random(seed), cash=cash)
@@ -89,10 +88,10 @@ def test_an_unreadable_balance_keeps_the_last_known_figure(config):
     assert engine.portfolio.cash == pytest.approx(120.0)
 
 
-def test_paper_mode_ignores_the_wallet_entirely(config):
-    config.mode = "paper"
+def test_an_executor_without_a_wallet_keeps_the_bookkeeping_figure(config):
+    """The simulated executor in tests reports no balance; nothing should break."""
     market = FakeDexScreener([])
-    executor = WalletExecutor(config, data=market, rng=random.Random(1), cash=5.0)
+    executor = SimulatedExecutor(config, data=market, rng=random.Random(1))
     engine = TradingEngine(config, storage=Storage(":memory:"), data=market, executor=executor)
 
     assert engine.sync_live_balance() is None
@@ -128,7 +127,6 @@ def test_a_live_cycle_sizes_against_the_wallet_end_to_end(config):
     config.risk.starting_cash_usd = 1_000.0   # must not influence anything
     hot = make_pair("BEST", chg_m5=12.0, chg_h1=55.0, vol_h1=400_000, vol_h24=960_000,
                     buys_m5=90, sells_m5=10, liquidity=700_000)
-    config.execution.paper_failure_rate = 0.0
     engine, _ = build(config, cash=80.0, pairs=[hot])
 
     report = engine.run_cycle()
@@ -141,14 +139,13 @@ def test_a_live_cycle_sizes_against_the_wallet_end_to_end(config):
 def test_wallet_balance_is_persisted_across_restarts(config, tmp_path):
     db = str(tmp_path / "live.sqlite3")
     config.state_db = db
-    config.mode = "live"
     market = FakeDexScreener([])
     executor = WalletExecutor(config, data=market, rng=random.Random(1), cash=42.0)
     engine = TradingEngine(config, storage=Storage(db), data=market, executor=executor)
     engine.sync_live_balance()
     engine.storage.close()
 
-    revived = Portfolio(Storage(db), config.risk.starting_cash_usd, mode="live")
+    revived = Portfolio(Storage(db), config.risk.starting_cash_usd)
     assert revived.cash == pytest.approx(42.0)
     assert revived.starting_cash == pytest.approx(42.0)
 
@@ -167,7 +164,6 @@ def test_a_full_live_cycle_with_the_real_executor(config, monkeypatch):
 
     monkeypatch.setenv(CONFIRM_ENV, CONFIRM_VALUE)
 
-    config.mode = "live"
     config.risk.position_size_pct = 0.25
     config.risk.max_position_usd = 25.0
     config.risk.min_position_usd = 5.0
@@ -211,7 +207,6 @@ def test_live_cycle_books_nothing_when_the_swap_reverts(config, monkeypatch):
     from tests.test_live_executor import FakeJupiter, FakeRpc
 
     monkeypatch.setenv(CONFIRM_ENV, CONFIRM_VALUE)
-    config.mode = "live"
     config.risk.position_size_pct = 0.25
     config.risk.min_position_usd = 5.0
 

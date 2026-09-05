@@ -28,8 +28,8 @@ class handler(JsonHandler):  # noqa: N801
         report = run_checks(config, deep=False)
         return {
             "ok": report.healthy,
-            "mode": config.mode,
-            "cron_secret_set": bool(os.environ.get("CRON_SECRET", "").strip()),
+            "mode": "live",
+            "read_only": True,
             "checks": [
                 {"name": c.name, "status": c.status, "detail": c.detail,
                  "elapsed_ms": round(c.elapsed_ms, 1)}

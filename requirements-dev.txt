@@ -1,2 +1,5 @@
 -r requirements.txt
+# The wallet and signing tests are the ones that handle money, so CI runs them
+# rather than skipping them.
+-r requirements-live.txt
 pytest>=7.4

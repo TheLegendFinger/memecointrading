@@ -1,103 +1,86 @@
 # memebot configuration - copy to config.yaml and edit.
-#   python -m memebot run --config config.yaml
+# The menu creates it for you on the first run.
 #
-# Every value here is optional; anything omitted uses the built-in default
-# (see `python -m memebot config` for the full effective configuration).
+# This bot trades real money. Every number here is deliberately conservative
+# and sized for a SMALL wallet (~$50-200): real fills cost more than you expect,
+# failed swaps still cost fees, and there is no undo. Raise limits slowly, and
+# only after watching it work.
+#
+# Anything you leave out uses the built-in default - run
+# `python -m memebot config` to see the full effective configuration.
 
-# "paper" simulates fills locally. "live" signs and broadcasts real swaps and
-# additionally requires LIVE_TRADING_CONFIRM=I_UNDERSTAND_THE_RISK in the env.
-mode: paper
-
-poll_interval_seconds: 30
-# A SQLite path, or a postgres:// URL. A DATABASE_URL / POSTGRES_URL in the
-# environment overrides this, so a deployment needs no edit here.
+poll_interval_seconds: 45        # fewer API calls; memecoin moves last minutes
 state_db: data/memebot.sqlite3
 log_file: logs/memebot.log
 log_level: INFO
-dry_run: false          # evaluate and log decisions, never send an order
+dry_run: false                   # true = decide and log, place no orders
 
 data:
   chain: solana
-  # DexScreener search terms used to build the candidate universe each cycle.
   search_terms: ["SOL", "WSOL", "pump", "bonk"]
-  use_boosted_feed: true      # also pull the DexScreener boost leaderboards
-  use_token_profiles: true    # ...and the newest token profiles
+  use_boosted_feed: true
+  use_token_profiles: true
   max_candidates: 120
-  rate_limit_per_minute: 120  # DexScreener allows ~300/min; stay well under
-  jupiter_rate_limit_per_minute: 60   # Jupiter's keyless tier is stricter
-  cache_ttl_seconds: 5
-  # Jupiter's keyless endpoints. With a paid key (JUPITER_API_KEY in the env)
-  # switch these to https://api.jup.ag/swap/v1 and https://api.jup.ag/price/v3.
-  # If Jupiter moves an endpoint, `memebot doctor` will tell you, and this is
-  # where you point it at the new one.
-  jupiter_quote_url: https://lite-api.jup.ag/swap/v1
-  jupiter_price_url: https://lite-api.jup.ag/price/v3
 
-# Hard safety gates. A pair must clear all of these before it is even scored.
 filters:
-  min_liquidity_usd: 25000        # must be deep enough to exit
+  # Stricter than paper. With real money, being able to EXIT matters more
+  # than finding more candidates.
+  min_liquidity_usd: 50000       # you must be able to sell what you buy
   max_liquidity_usd: 5000000
-  min_volume_h1_usd: 20000
-  min_volume_h24_usd: 100000
-  min_age_minutes: 20             # skip the chaotic first minutes
-  max_age_minutes: 20160          # two weeks
-  max_fdv_usd: 50000000
-  min_trades_h1: 60
-  min_buy_ratio_h1: 0.45
-  min_liquidity_to_fdv: 0.015     # rug guard: thin float behind a big valuation
-  max_price_change_h1_pct: 300    # do not chase something already vertical
-  max_price_change_h24_pct: 1500
+  min_volume_h1_usd: 40000
+  min_volume_h24_usd: 250000
+  min_age_minutes: 30            # skip the first, most manipulated minutes
+  max_age_minutes: 20160
+  max_fdv_usd: 30000000
+  min_trades_h1: 100
+  min_buy_ratio_h1: 0.48
+  min_liquidity_to_fdv: 0.02     # rug guard, tighter than paper
+  max_price_change_h1_pct: 200   # do not buy the top of a vertical move
+  max_price_change_h24_pct: 800
   blacklist_mints: []
   blacklist_symbols: []
 
 strategy:
   name: momentum
-  min_score: 0.55                 # 0..1 composite; raise to trade less, better
-  weight_momentum_m5: 0.30
-  weight_momentum_h1: 0.25
-  weight_volume_surge: 0.20
-  weight_buy_pressure: 0.15
-  weight_liquidity: 0.10
-  exit_momentum_m5_pct: -8.0      # bail when the 5m candle reverses this hard
-  max_new_positions_per_cycle: 2
+  min_score: 0.62                # pickier than paper's 0.55
+  max_new_positions_per_cycle: 1 # one entry per cycle, no piling in
 
 risk:
-  starting_cash_usd: 1000         # paper bankroll (ignored in live mode)
-  max_open_positions: 5
-  position_size_pct: 0.08         # 8% of equity per entry
-  min_position_usd: 10
-  max_position_usd: 250
-  max_position_pct_of_liquidity: 0.005   # never be more than 0.5% of the pool
-  cash_reserve_pct: 0.05
+  # The wallet is the bankroll - its balance is read from the chain at the start
+  # of every cycle, so this is only a placeholder until the first read.
+  starting_cash_usd: 100
 
-  stop_loss_pct: 0.20
-  take_profit_pct: 0.60
-  trailing_stop_pct: 0.25
-  trailing_arm_profit_pct: 0.25   # trail only arms once up 25%
-  max_hold_minutes: 720
-  liquidity_drain_pct: 0.5        # exit if the pool halves while we are in it
-  stale_price_exit_minutes: 30
+  max_open_positions: 3
+  position_size_pct: 0.20        # 20% of a small bankroll per position
+  min_position_usd: 5            # below this a swap's fees eat the trade
+  max_position_usd: 25           # hard ceiling per position - raise slowly
+  max_position_pct_of_liquidity: 0.002   # never be more than 0.2% of the pool
+  cash_reserve_pct: 0.10
 
-  max_daily_loss_pct: 0.15        # circuit breaker for the day
-  max_drawdown_pct: 0.35          # circuit breaker from peak equity
-  cooldown_minutes_after_loss: 30
-  reentry_cooldown_minutes: 120
+  stop_loss_pct: 0.25            # wider than paper: real fills need room
+  take_profit_pct: 0.50
+  trailing_stop_pct: 0.20
+  trailing_arm_profit_pct: 0.25
+  max_hold_minutes: 360          # 6 hours
+  liquidity_drain_pct: 0.4       # exit earlier than paper on a draining pool
+  stale_price_exit_minutes: 20
+
+  max_daily_loss_pct: 0.20       # stop trading for the day after -20%
+  max_drawdown_pct: 0.35         # stop entirely after -35% from the peak
+  cooldown_minutes_after_loss: 45
+  reentry_cooldown_minutes: 180
 
 execution:
-  slippage_bps: 150               # 1.5% tolerance sent to the aggregator
-  fee_bps: 25                     # pool fee assumed when simulating
-  network_fee_usd: 0.05
-  priority_fee_usd: 0.35
-  paper_base_slippage_bps: 30
-  paper_failure_rate: 0.02        # 2% of simulated swaps fail, like real life
-  # true = price paper fills off real Jupiter routes instead of the built-in
-  # impact curve. The most realistic setting; costs two API calls per order.
-  paper_use_live_quotes: false
-  # paper_random_seed: 42         # set for reproducible paper runs
-
-  # Live only:
-  rpc_url: https://api.mainnet-beta.solana.com
-  priority_fee_microlamports: 200000
+  slippage_bps: 200              # 2%: memecoin swaps revert below this
+  fee_bps: 25
+  # A higher priority fee lands more transactions when the network is busy.
+  # 0.0003 SOL-ish per swap at 300k microlamports.
+  priority_fee_microlamports: 300000
   compute_unit_limit: 300000
-  confirm_timeout_seconds: 60
-  quote_mint: So11111111111111111111111111111111111111112   # trade against SOL
+  max_tx_retries: 3
+  confirm_timeout_seconds: 90
+  # SOL held back for fees and token-account rent, never traded.
+  sol_fee_reserve: 0.025
+  # Trade against SOL. Change to the USDC mint to hold stables between trades.
+  quote_mint: So11111111111111111111111111111111111111112
+  rpc_url: https://api.mainnet-beta.solana.com

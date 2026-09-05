@@ -19,7 +19,7 @@ class handler(JsonHandler):  # noqa: N801 - Vercel requires this name
             last_cycle = storage.get_state("last_cycle_at")
             curve = storage.equity_curve(limit=2)
             return {
-                "mode": config.mode,
+                "mode": "live",
                 "strategy": config.strategy.name,
                 "equity_usd": stats["equity_usd"],
                 "cash_usd": stats["cash_usd"],

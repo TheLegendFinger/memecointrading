@@ -289,7 +289,7 @@ class Storage:
         return out
 
     # ---- trades ----------------------------------------------------------------
-    def record_fill(self, fill: Fill, realized_pnl: float = 0.0, mode: str = "paper") -> None:
+    def record_fill(self, fill: Fill, realized_pnl: float = 0.0, mode: str = "live") -> None:
         row = fill.as_row()
         self.execute(
             """INSERT INTO trades(ts, client_id, side, token_address, symbol, price,

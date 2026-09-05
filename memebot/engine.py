@@ -24,7 +24,7 @@ from .data.dexscreener import DexScreenerClient
 from .data.jupiter import JupiterClient
 from .execution import build_executor
 from .execution.base import Executor
-from .models import Fill, Mode, Order, PairSnapshot, Position, Side, Signal
+from .models import Fill, Order, PairSnapshot, Position, Side, Signal
 from .portfolio import Portfolio
 from .risk import RiskManager
 from .storage import Storage, open_storage
@@ -84,9 +84,7 @@ class TradingEngine:
             rate_limit_per_minute=config.data.jupiter_rate_limit_per_minute,
         )
         self.executor = executor or build_executor(config, data=self.data, jupiter=self.jupiter)
-        self.portfolio = portfolio or Portfolio(
-            self.storage, config.risk.starting_cash_usd, mode=config.mode
-        )
+        self.portfolio = portfolio or Portfolio(self.storage, config.risk.starting_cash_usd)
         self.risk = RiskManager(config.risk)
         self.filter = CandidateFilter(config.filters)
         self.strategy = build_strategy(config.strategy.name, config.strategy)
@@ -127,21 +125,21 @@ class TradingEngine:
         self._stop = True
 
     def preflight(self) -> Optional[str]:
+        """Is the executor ready? A dry run needs nothing: it sends no orders,
+        so it neither touches the wallet nor needs the interlock."""
+        if self.config.dry_run:
+            return None
         return self.executor.preflight()
 
     # ---- live balance ----------------------------------------------------------
     def sync_live_balance(self) -> Optional[float]:
-        """In live mode, replace our bookkeeping cash with the wallet's balance.
+        """Replace our bookkeeping cash with the wallet's actual balance.
 
-        Paper mode keeps a running cash figure because nothing external can
-        change it. A real wallet can: you might send SOL in or out, a swap can
+        A wallet changes underneath us: you might send SOL in or out, a swap can
         land after we gave up waiting, fees accrue. Reading the chain at the top
         of every cycle keeps position sizing honest - the bot can never size a
         trade against money that is not there.
         """
-        if self.config.mode != Mode.LIVE.value:
-            return None
-
         cash = self.executor.available_cash_usd()
         if cash is None:
             log.warning("Could not read the wallet balance; keeping the last known cash figure")
@@ -150,8 +148,8 @@ class TradingEngine:
         previous = self.portfolio.cash
         self.portfolio.set_cash(cash)
 
-        # First live cycle: anchor the return baseline to what the wallet
-        # actually held, not to the paper `starting_cash_usd`.
+        # First cycle: anchor the return baseline to what the wallet actually
+        # held, rather than to the configured `starting_cash_usd`.
         if not self.storage.get_state("live_baseline_set"):
             self.portfolio.set_starting_cash(self.portfolio.equity)
             self.storage.set_state("live_baseline_set", True)
@@ -413,15 +411,18 @@ class TradingEngine:
         if blocked:
             raise RuntimeError(f"Executor is not ready: {blocked}")
 
-        log.info(
-            "Starting memebot | mode=%s | %s | equity $%.2f | strategy=%s",
-            self.config.mode, self.executor.describe(), self.portfolio.equity, self.strategy.name,
-        )
-        self.emit("start", f"Started in {self.config.mode} mode",
-                  level="warn" if self.config.mode == Mode.LIVE.value else "info",
-                  detail=f"equity ${self.portfolio.equity:,.2f} | {self.executor.describe()}")
-        if self.config.mode == Mode.LIVE.value:
-            log.warning("LIVE MODE - real funds are at risk on every order")
+        if self.config.dry_run:
+            log.info("Starting memebot | DRY RUN - decisions are logged, no orders are sent")
+            self.emit("start", "Started a dry run",
+                      detail="no orders will be sent")
+        else:
+            log.info(
+                "Starting memebot | %s | equity $%.2f | strategy=%s",
+                self.executor.describe(), self.portfolio.equity, self.strategy.name,
+            )
+            self.emit("start", "Started trading", level="warn",
+                      detail=f"equity ${self.portfolio.equity:,.2f} | {self.executor.describe()}")
+            log.warning("Real funds are at risk on every order")
 
         self.install_signal_handlers()
         while not self._stop:

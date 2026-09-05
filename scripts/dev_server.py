@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Serve the dashboard locally, exactly as Vercel would.
+"""Serve the read-only dashboard locally, exactly as Vercel would.
 
     python scripts/dev_server.py                 # http://localhost:8000
     python scripts/dev_server.py --port 3000 --db data/memebot.sqlite3
@@ -32,7 +32,6 @@ ROUTES = {
     "/api/scan": "scan",
     "/api/events": "events",
     "/api/candles": "candles",
-    "/api/cycle": "cycle",
     "/api/health": "health",
 }
 
@@ -91,12 +90,10 @@ def main(argv=None) -> int:
 
     if args.db:
         os.environ["MEMEBOT_STATE_DB"] = args.db
-    os.environ.setdefault("CRON_SECRET", "dev")
 
     server = HTTPServer((args.host, args.port), DevHandler)
     print(f"\n  memebot dashboard  ->  http://{args.host}:{args.port}")
     print(f"  state              ->  {os.environ.get('MEMEBOT_STATE_DB', 'data/memebot.sqlite3')}")
-    print(f"  run one cycle      ->  http://{args.host}:{args.port}/api/cycle?key=dev")
     print("\n  Ctrl+C to stop.\n")
     try:
         server.serve_forever()

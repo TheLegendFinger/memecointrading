@@ -67,10 +67,10 @@ class ConsoleView:
 
     # ---- pieces ---------------------------------------------------------------
     def header(self, engine) -> List[str]:
-        mode = engine.config.mode.upper()
         dot = self.glyphs.dot
-        badge = f"{mode} {dot} cycle {engine.cycles} {dot} {time.strftime('%H:%M:%S')}"
-        colour = YELLOW if engine.config.is_live else CYAN
+        label = "DRY RUN" if engine.config.dry_run else "LIVE"
+        badge = f"{label} {dot} cycle {engine.cycles} {dot} {time.strftime('%H:%M:%S')}"
+        colour = GREEN if engine.config.dry_run else YELLOW
         return [paint(box("memebot", badge, width=self.width, glyphs=self.glyphs), colour)]
 
     def summary(self, engine) -> List[str]:
@@ -168,9 +168,9 @@ class ConsoleView:
 
     def footer(self, engine) -> List[str]:
         interval = engine.config.poll_interval_seconds
-        note = f"  next scan in ~{interval:.0f}s  {self.glyphs.dot}  Ctrl+C to stop"
-        if engine.config.is_live:
-            note += f"  {self.glyphs.dot}  LIVE - real funds"
+        tail = "no orders sent" if engine.config.dry_run else "real funds"
+        note = (f"  next scan in ~{interval:.0f}s  {self.glyphs.dot}  Ctrl+C to stop"
+                f"  {self.glyphs.dot}  {tail}")
         return [paint(note, GREY)]
 
     # ---- the frame ------------------------------------------------------------

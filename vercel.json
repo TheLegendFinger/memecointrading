@@ -1,20 +1,22 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
-    "api/cycle.py": { "maxDuration": 60 },
-    "api/scan.py": { "maxDuration": 60 },
-    "api/health.py": { "maxDuration": 30 }
-  },
-  "crons": [
-    {
-      "path": "/api/cycle",
-      "schedule": "0 12 * * *"
+    "api/scan.py": {
+      "maxDuration": 60
+    },
+    "api/health.py": {
+      "maxDuration": 30
     }
-  ],
+  },
   "headers": [
     {
       "source": "/api/(.*)",
-      "headers": [{ "key": "X-Robots-Tag", "value": "noindex" }]
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex"
+        }
+      ]
     }
   ]
 }

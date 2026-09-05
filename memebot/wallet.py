@@ -31,13 +31,21 @@ class WalletError(RuntimeError):
     pass
 
 
+def install_hint() -> str:
+    """How to install the extras, in the form this platform actually uses."""
+    import sys
+
+    if os.name == "nt":
+        return "  .\\.venv\\Scripts\\python.exe -m pip install -r requirements-live.txt"
+    return f"  {sys.executable} -m pip install -r requirements-live.txt"
+
+
 def _keypair_module():
     try:
         from solders.keypair import Keypair  # type: ignore
     except ImportError as exc:  # pragma: no cover - optional dependency
         raise WalletError(
-            "Creating a wallet needs the 'solders' package:\n"
-            "  .\\.venv\\Scripts\\python.exe -m pip install -r requirements-live.txt"
+            "Creating a wallet needs the 'solders' package:\n" + install_hint()
         ) from exc
     return Keypair
 
@@ -57,8 +65,7 @@ def _bip39():
         from mnemonic import Mnemonic  # type: ignore
     except ImportError as exc:  # pragma: no cover - optional dependency
         raise WalletError(
-            "Seed phrases need the 'mnemonic' package:\n"
-            "  .\\.venv\\Scripts\\python.exe -m pip install -r requirements-live.txt"
+            "Seed phrases need the 'mnemonic' package:\n" + install_hint()
         ) from exc
     return Mnemonic("english")
 

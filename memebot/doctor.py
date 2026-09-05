@@ -17,7 +17,7 @@ from typing import Any, Callable, List, Optional
 from .config import BotConfig
 from .data.dexscreener import DexScreenerClient
 from .data.jupiter import JupiterClient
-from .models import Mode, USDC_MINT, WSOL_MINT
+from .models import USDC_MINT, WSOL_MINT
 from .storage import is_postgres_dsn, open_storage
 
 OK = "ok"
@@ -114,8 +114,8 @@ def _run_checks(
     report.add(
         "config",
         OK,
-        f"mode={config.mode} strategy={config.strategy.name} "
-        f"min_score={config.strategy.min_score} state={_describe_state(config)}",
+        f"strategy={config.strategy.name} min_score={config.strategy.min_score} "
+        f"state={_describe_state(config)}",
     )
 
     # ---- state store -------------------------------------------------------
@@ -204,7 +204,7 @@ def _run_checks(
         jupiter.http.get(configured, params={"ids": WSOL_MINT})
         return FAIL, f"{configured} answered but no SOL price was parsed - the shape changed"
 
-    price_check = report.run("jupiter price", check_price)
+    report.run("jupiter price", check_price)
 
     if deep:
         def check_quote():
@@ -249,35 +249,17 @@ def _run_checks(
 
     report.run("candidate pipeline", check_pipeline)
 
-    # ---- live trading readiness -------------------------------------------
-    if config.mode == Mode.LIVE.value:
-        def check_live():
-            from .execution import build_executor
+    # ---- trading readiness -------------------------------------------------
+    def check_execution():
+        from .execution import build_executor
 
-            executor = build_executor(config, data=data, jupiter=jupiter)
-            blocked = executor.preflight()
-            if blocked:
-                return FAIL, blocked
-            return OK, executor.describe()
+        executor = build_executor(config, data=data, jupiter=jupiter)
+        blocked = executor.preflight()
+        if blocked:
+            return FAIL, blocked
+        return OK, executor.describe()
 
-        report.run("live execution", check_live)
-    else:
-        armed = os.environ.get("LIVE_TRADING_CONFIRM", "") == "I_UNDERSTAND_THE_RISK"
-        report.add(
-            "live execution",
-            OK,
-            "paper mode - no funds at risk"
-            + (" (live interlock is armed but mode is paper)" if armed else ""),
-        )
-
-    if price_check.status == FAIL and config.execution.paper_use_live_quotes:
-        report.add(
-            "paper quotes",
-            WARN,
-            "paper_use_live_quotes is on but Jupiter is unreachable; "
-            "fills will fall back to the built-in impact model",
-        )
-
+    report.run("execution", check_execution)
     return report
 
 

@@ -15,7 +15,7 @@ import pytest
 from api._common import is_serverless, render
 from memebot.config import BotConfig
 from memebot.engine import TradingEngine
-from memebot.execution.paper import PaperExecutor
+from tests.fakes import SimulatedExecutor
 from memebot.storage import Storage
 from tests.conftest import FakeDexScreener, make_pair
 
@@ -38,12 +38,11 @@ def state_db(tmp_path, monkeypatch):
 
     config = BotConfig()
     config.state_db = db
-    config.execution.paper_failure_rate = 0.0
     hot = make_pair("BEST", chg_m5=12.0, chg_h1=55.0, vol_h1=400_000, vol_h24=960_000,
                     buys_m5=90, sells_m5=10, liquidity=700_000)
     market = FakeDexScreener([hot])
     engine = TradingEngine(config, storage=Storage(db), data=market,
-                           executor=PaperExecutor(config, data=market, rng=random.Random(4)))
+                           executor=SimulatedExecutor(config, data=market, rng=random.Random(4)))
     engine.run_cycle()
     engine.storage.close()
     return db
@@ -57,23 +56,6 @@ def no_external_candles(monkeypatch):
     monkeypatch.setattr(GeckoTerminalClient, "ohlcv", lambda self, *a, **k: [])
 
 
-@pytest.fixture
-def offline(monkeypatch):
-    """Keep the cycle endpoint away from the real DexScreener API.
-
-    The engine it builds is the real one; only market access is stubbed, so the
-    cycle still exercises auth, state, accounting and the response shape.
-    """
-    from memebot.data.dexscreener import DexScreenerClient
-    from memebot.execution.paper import PaperExecutor as Paper
-
-    monkeypatch.setattr(DexScreenerClient, "discover", lambda self, *a, **k: [])
-    monkeypatch.setattr(DexScreenerClient, "best_pair", lambda self, address: None)
-    monkeypatch.setattr(DexScreenerClient, "price_usd", lambda self, address: 0.0)
-    monkeypatch.setattr(Paper, "price_for", lambda self, address: 0.0)
-    return True
-
-
 def call(module_name, path="/", headers=None):
     module = __import__(f"api.{module_name}", fromlist=["handler"])
     return render(module.handler, path, Headers(headers or {}))
@@ -83,7 +65,7 @@ def call(module_name, path="/", headers=None):
 def test_status_reports_the_portfolio(state_db):
     status, body = call("status")
     assert status == 200
-    assert body["mode"] == "paper"
+    assert body["mode"] == "live"
     assert body["equity_usd"] > 0
     assert body["open_positions"] == 1
     assert "took_ms" in body and "generated_at" in body
@@ -127,51 +109,28 @@ def test_responses_are_json_serialisable(state_db):
         json.dumps(body)  # would raise on a stray non-serialisable value
 
 
-# ---- the cycle endpoint is protected -------------------------------------------
-def test_cycle_rejects_an_unauthenticated_request(state_db, monkeypatch):
-    monkeypatch.setenv("CRON_SECRET", "s3cret")
-    status, body = call("cycle")
-    assert status == 401
-    assert "unauthorized" in body["error"]
+# ---- the deployment is read-only ----------------------------------------------
+def test_there_is_no_endpoint_that_can_trade(state_db):
+    """A cloud function must never be able to spend the wallet.
+
+    Trading runs on the machine that holds the key; the deployment only reads.
+    """
+    import pathlib
+
+    api_dir = pathlib.Path(__file__).resolve().parent.parent / "api"
+    assert not (api_dir / "cycle.py").exists()
+
+    sources = " ".join(p.read_text() for p in api_dir.glob("*.py"))
+    for forbidden in ("TradingEngine", "run_cycle", "liquidate", "LiveExecutor"):
+        assert forbidden not in sources, f"{forbidden} must not be reachable from the web"
 
 
-def test_cycle_rejects_a_wrong_token(state_db, monkeypatch):
-    monkeypatch.setenv("CRON_SECRET", "s3cret")
-    status, _body = call("cycle", "/api/cycle", {"Authorization": "Bearer wrong"})
-    assert status == 401
+def test_the_dev_server_exposes_no_trading_route():
+    from scripts.dev_server import ROUTES
 
-
-def test_cycle_rejects_everything_when_no_secret_is_configured(state_db, monkeypatch):
-    """An unset CRON_SECRET must fail closed, never open."""
-    monkeypatch.delenv("CRON_SECRET", raising=False)
-    status, _body = call("cycle", "/api/cycle?key=")
-    assert status == 401
-
-
-def test_cycle_accepts_the_bearer_token(state_db, offline, monkeypatch):
-    monkeypatch.setenv("CRON_SECRET", "s3cret")
-    status, body = call("cycle", "/api/cycle", {"Authorization": "Bearer s3cret"})
-    assert status == 200
-    assert body["ok"] is True
-    assert "equity_usd" in body
-
-
-def test_cycle_accepts_the_query_key_for_external_schedulers(state_db, offline, monkeypatch):
-    monkeypatch.setenv("CRON_SECRET", "s3cret")
-    status, body = call("cycle", "/api/cycle?key=s3cret")
-    assert status == 200
-    assert body["ok"] is True
-
-
-def test_cycle_records_its_own_heartbeat(state_db, offline, monkeypatch):
-    monkeypatch.setenv("CRON_SECRET", "s3cret")
-    call("cycle", "/api/cycle?key=s3cret")
-    store = Storage(state_db)
-    try:
-        assert store.get_state("last_cycle_at") > 0
-        assert store.get_state("cycles_run") >= 1
-    finally:
-        store.close()
+    assert "/api/cycle" not in ROUTES
+    assert set(ROUTES) <= {"/api/status", "/api/positions", "/api/trades", "/api/equity",
+                           "/api/scan", "/api/events", "/api/candles", "/api/health"}
 
 
 # ---- failure modes -------------------------------------------------------------

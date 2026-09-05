@@ -8,16 +8,30 @@ from memebot.storage import Storage
 
 
 # ---- config --------------------------------------------------------------------
-def test_defaults_are_paper_mode():
+def test_there_is_no_trading_mode_any_more():
+    """The bot trades for real; there is nothing to switch."""
     cfg = BotConfig()
     cfg.validate()
-    assert cfg.mode == "paper" and not cfg.is_live
+    assert not hasattr(cfg, "mode")
+
+
+def test_a_config_still_asking_for_paper_mode_says_what_happened(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("mode: paper\n")
+    with pytest.raises(ValueError, match="paper trading has been removed"):
+        load_config(str(path))
+
+
+def test_a_config_with_the_old_simulator_settings_says_what_happened(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("execution:\n  paper_failure_rate: 0.02\n")
+    with pytest.raises(ValueError, match="no longer exist"):
+        load_config(str(path))
 
 
 def test_yaml_file_overrides_defaults(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text(
-        "mode: paper\n"
         "poll_interval_seconds: 45\n"
         "risk:\n"
         "  starting_cash_usd: 5000\n"
@@ -62,15 +76,14 @@ def test_env_overrides_the_file(tmp_path, monkeypatch):
 
 
 def test_explicit_overrides_beat_the_environment(tmp_path, monkeypatch):
-    monkeypatch.setenv("MEMEBOT_MODE", "live")
-    cfg = load_config(None, {"mode": "paper"})
-    assert cfg.mode == "paper"
+    monkeypatch.setenv("MEMEBOT_STARTING_CASH", "500")
+    cfg = load_config(None, {"risk.starting_cash_usd": 42.0})
+    assert cfg.risk.starting_cash_usd == 42.0
 
 
 @pytest.mark.parametrize(
     "mutate, message",
     [
-        (lambda c: setattr(c, "mode", "turbo"), "mode must be"),
         (lambda c: setattr(c.risk, "position_size_pct", 0), "position_size_pct"),
         (lambda c: setattr(c.risk, "max_open_positions", 0), "max_open_positions"),
         (lambda c: setattr(c.risk, "stop_loss_pct", 1.5), "stop_loss_pct"),
@@ -97,7 +110,7 @@ def test_min_position_cannot_exceed_max():
 def test_config_command_prints_effective_settings(capsys):
     assert cli.main(["config"]) == 0
     printed = json.loads(capsys.readouterr().out)
-    assert printed["mode"] == "paper"
+    assert "mode" not in printed
     assert printed["risk"]["starting_cash_usd"] == 1000.0
 
 
@@ -121,13 +134,7 @@ def test_bad_config_path_exits_with_code_two(capsys):
     assert "config error" in capsys.readouterr().err
 
 
-def test_reset_refuses_in_live_mode(tmp_path, capsys):
-    db = str(tmp_path / "s.sqlite3")
-    assert cli.main(["--db", db, "--mode", "live", "reset", "-y"]) == 1
-    assert "Refusing to reset" in capsys.readouterr().err
-
-
-def test_reset_wipes_paper_state(tmp_path, capsys):
+def test_reset_wipes_the_trade_history(tmp_path, capsys):
     db = str(tmp_path / "s.sqlite3")
     store = Storage(db)
     store.set_state("cash_usd", 12.34)
@@ -144,7 +151,7 @@ def test_trades_command_is_empty_on_a_new_database(tmp_path, capsys):
 
 
 def test_cli_flags_reach_the_engine_config(monkeypatch, capsys):
-    """`--dry-run` and `--mode` must survive parsing into the live BotConfig."""
+    """`--dry-run` must survive parsing into the BotConfig."""
     seen = {}
 
     class StubEngine:
@@ -160,10 +167,9 @@ def test_cli_flags_reach_the_engine_config(monkeypatch, capsys):
             return CycleReport(scanned=3, passed_filters=1, signals=1)
 
     monkeypatch.setattr(cli, "_build_engine", StubEngine)
-    assert cli.main(["--dry-run", "--mode", "paper", "once"]) == 0
+    assert cli.main(["--dry-run", "once"]) == 0
 
     assert seen["config"].dry_run is True
-    assert seen["config"].mode == "paper"
     assert "scanned=3" in capsys.readouterr().out
 
 
@@ -183,9 +189,7 @@ def test_once_reports_a_blocked_executor(monkeypatch, capsys):
 def test_the_shipped_example_config_is_valid():
     """config.example.yaml is the file users copy - every key must be real."""
     cfg = load_config("config.example.yaml")
-    assert cfg.mode == "paper"
     assert cfg.data.use_token_profiles is True
-    assert cfg.execution.paper_use_live_quotes is False
 
 
 def test_state_db_accepts_a_postgres_url(monkeypatch):

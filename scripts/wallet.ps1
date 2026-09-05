@@ -14,7 +14,7 @@ if (-not (Install-LiveExtras)) {
 }
 
 $configArgs = @()
-if (Test-Path -LiteralPath 'config.live.yaml') { $configArgs = @('--config', 'config.live.yaml') }
+if (Test-Path -LiteralPath 'config.yaml') { $configArgs = @('--config', 'config.yaml') }
 
 if ($New) {
     if ($Save) {

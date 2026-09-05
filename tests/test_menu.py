@@ -62,7 +62,7 @@ def test_the_header_shows_the_portfolio(tmp_path, monkeypatch):
 
     from memebot.config import BotConfig
     from memebot.engine import TradingEngine
-    from memebot.execution.paper import PaperExecutor
+    from tests.fakes import SimulatedExecutor
     from memebot.storage import Storage
     from tests.conftest import FakeDexScreener, make_pair
 
@@ -71,12 +71,11 @@ def test_the_header_shows_the_portfolio(tmp_path, monkeypatch):
 
     config = BotConfig()
     config.state_db = db
-    config.execution.paper_failure_rate = 0.0
     hot = make_pair("BEST", chg_m5=12.0, chg_h1=55.0, vol_h1=400_000, vol_h24=960_000,
                     buys_m5=90, sells_m5=10, liquidity=700_000)
     market = FakeDexScreener([hot])
     engine = TradingEngine(config, storage=Storage(db), data=market,
-                           executor=PaperExecutor(config, data=market, rng=random.Random(1)))
+                           executor=SimulatedExecutor(config, data=market, rng=random.Random(1)))
     engine.run_cycle()
     engine.storage.close()
 
@@ -92,7 +91,7 @@ def test_a_broken_state_file_still_renders_the_menu(monkeypatch):
     menu, driver = menu_for("0")
     menu.run()
     assert "could not read the portfolio" in driver.text
-    assert "Paper trade" in driver.text
+    assert "Start trading" in driver.text
 
 
 # ---- input handling ------------------------------------------------------------
@@ -107,7 +106,7 @@ def test_an_unknown_choice_explains_itself_and_carries_on():
     menu, driver = menu_for("42", "0")
     menu.run()
     assert "not on the menu" in driver.text
-    assert driver.text.count("Paper trade") == 2, "the menu should redraw"
+    assert driver.text.count("Start trading") == 2, "the menu should redraw"
 
 
 def test_empty_input_is_not_fatal():
@@ -161,7 +160,7 @@ def test_ctrl_c_inside_an_action_returns_to_the_menu(monkeypatch):
     def interrupted(self):
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(Menu, "do_paper", interrupted)
+    monkeypatch.setattr(Menu, "do_trade", interrupted)
     menu, driver = menu_for("1", "0")
 
     assert menu.run() == 0
@@ -169,80 +168,79 @@ def test_ctrl_c_inside_an_action_returns_to_the_menu(monkeypatch):
 
 
 # ---- trading actions -----------------------------------------------------------
-def test_paper_trading_runs_the_engine_in_paper_mode(monkeypatch):
+def test_a_dry_run_places_no_orders(monkeypatch):
     seen = {}
+    monkeypatch.setattr(Menu, "_prepare", lambda self, require_wallet: True)
+    monkeypatch.setattr(Menu, "_run_engine", lambda self, dry_run=False: seen.update(dry=dry_run))
 
-    def fake_run(self, live):
-        seen["live"] = live
-
-    monkeypatch.setattr(Menu, "_run_engine", fake_run)
-    menu, _driver = menu_for("1", "0")
+    menu, _driver = menu_for("2", "0")
     menu.run()
-    assert seen == {"live": False}
+    assert seen == {"dry": True}
 
 
-def test_live_trading_needs_the_word_LIVE(monkeypatch, tmp_path):
+def test_a_dry_run_does_not_need_a_wallet(monkeypatch):
+    """Nothing is sent, so there is nothing to sign with."""
+    asked = {}
+    monkeypatch.setattr(Menu, "_prepare",
+                        lambda self, require_wallet: asked.update(wallet=require_wallet) or True)
+    monkeypatch.setattr(Menu, "_run_engine", lambda self, dry_run=False: None)
+
+    menu, _driver = menu_for("2", "0")
+    menu.run()
+    assert asked == {"wallet": False}
+
+
+def test_trading_needs_the_word_LIVE(monkeypatch):
     """Anything other than exactly LIVE must not start real trading."""
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "config.live.yaml").write_text("mode: live\n")
-
     started = []
-    monkeypatch.setattr(Menu, "_run_engine", lambda self, live: started.append(live))
-    monkeypatch.setattr("memebot.cli.cmd_wallet", lambda args, config: 0)
+    monkeypatch.setattr(Menu, "_prepare", lambda self, require_wallet: True)
+    monkeypatch.setattr(Menu, "_run_engine", lambda self, dry_run=False: started.append(True))
 
     # Lower case, a vague yes, or just pressing Enter must never be enough.
     for answer in ("live", "yes", "y", "ok", ""):
-        menu, driver = menu_for("2", answer, "0")
+        menu, driver = menu_for("1", answer, "0")
         menu.run()
-        assert not started, f"{answer!r} must not start live trading"
+        assert not started, f"{answer!r} must not start real trading"
         assert "Not started." in driver.text
 
 
-def test_surrounding_whitespace_does_not_defeat_the_live_confirmation(monkeypatch, tmp_path):
+def test_surrounding_whitespace_does_not_defeat_the_confirmation(monkeypatch):
     """Typing the word with a stray space still counts - they typed the word."""
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "config.live.yaml").write_text("mode: live\n")
-
     started = []
-    monkeypatch.setattr(Menu, "_run_engine", lambda self, live: started.append(live))
-    monkeypatch.setattr("memebot.cli.cmd_wallet", lambda args, config: 0)
+    monkeypatch.setattr(Menu, "_prepare", lambda self, require_wallet: True)
+    monkeypatch.setattr(Menu, "_run_engine", lambda self, dry_run=False: started.append(True))
 
-    menu, _driver = menu_for("2", "  LIVE  ", "0")
+    menu, _driver = menu_for("1", "  LIVE  ", "0")
     menu.run()
     assert started == [True]
 
 
-def test_live_trading_starts_when_confirmed(monkeypatch, tmp_path):
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "config.live.yaml").write_text("mode: live\n")
-
+def test_trading_starts_when_confirmed(monkeypatch):
     started = []
-    monkeypatch.setattr(Menu, "_run_engine", lambda self, live: started.append(live))
-    monkeypatch.setattr("memebot.cli.cmd_wallet", lambda args, config: 0)
+    monkeypatch.setattr(Menu, "_prepare", lambda self, require_wallet: True)
+    monkeypatch.setattr(Menu, "_run_engine", lambda self, dry_run=False: started.append(dry_run))
 
-    menu, _driver = menu_for("2", "LIVE", "0")
+    menu, _driver = menu_for("1", "LIVE", "0")
     menu.run()
-    assert started == [True]
+    assert started == [False], "the real thing, not a dry run"
 
 
-def test_live_trading_stops_when_the_wallet_is_not_ready(monkeypatch, tmp_path):
+def test_trading_stops_when_the_wallet_is_not_ready(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "config.live.yaml").write_text("mode: live\n")
-
     started = []
-    monkeypatch.setattr(Menu, "_run_engine", lambda self, live: started.append(live))
+    monkeypatch.setattr(Menu, "ensure_solana_packages", lambda self: True)
+    monkeypatch.setattr(Menu, "_run_engine", lambda self, dry_run=False: started.append(dry_run))
     monkeypatch.setattr("memebot.cli.cmd_wallet", lambda args, config: 3)  # exists, unfunded
 
-    menu, driver = menu_for("2", "", "0")
+    menu, driver = menu_for("1", "", "0")
     menu.run()
     assert not started
     assert "cannot trade yet" in driver.text
 
 
-def test_live_trading_offers_to_create_a_missing_wallet(monkeypatch, tmp_path):
+def test_trading_offers_to_create_a_missing_wallet(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "config.live.yaml").write_text("mode: live\n")
-
+    monkeypatch.setattr(Menu, "ensure_solana_packages", lambda self: True)
     created = []
 
     def fake_wallet(args, config):
@@ -253,9 +251,9 @@ def test_live_trading_offers_to_create_a_missing_wallet(monkeypatch, tmp_path):
 
     monkeypatch.setattr("memebot.cli.cmd_wallet", fake_wallet)
     started = []
-    monkeypatch.setattr(Menu, "_run_engine", lambda self, live: started.append(live))
+    monkeypatch.setattr(Menu, "_run_engine", lambda self, dry_run=False: started.append(dry_run))
 
-    menu, driver = menu_for("2", "y", "", "0")
+    menu, driver = menu_for("1", "y", "", "0")
     menu.run()
 
     assert created == [True]
@@ -294,8 +292,9 @@ def test_running_attaches_the_live_display(monkeypatch, tmp_path):
             captured["ran"] = True
 
     monkeypatch.setattr("memebot.engine.TradingEngine", StubEngine)
+    monkeypatch.setattr(Menu, "_prepare", lambda self, require_wallet: True)
 
-    menu, _driver = menu_for("1", "0")
+    menu, _driver = menu_for("1", "LIVE", "0")
     menu.run()
 
     assert captured.get("ran") is True
@@ -320,10 +319,11 @@ def test_logging_goes_to_the_file_while_the_display_is_up(monkeypatch, tmp_path)
             pass
 
     monkeypatch.setattr("memebot.engine.TradingEngine", StubEngine)
+    monkeypatch.setattr(Menu, "_prepare", lambda self, require_wallet: True)
     monkeypatch.setattr("memebot.logging_utils.setup_logging",
                         lambda level, log_file=None, console=True: calls.update(console=console))
 
-    menu, _driver = menu_for("1", "0")
+    menu, _driver = menu_for("1", "LIVE", "0")
     menu.run()
 
     # The test harness is not a terminal, so the view is inactive and ordinary

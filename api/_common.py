@@ -53,7 +53,7 @@ def load_bot_config(overrides: Optional[Dict[str, Any]] = None) -> BotConfig:
 
 def open_portfolio(config: BotConfig):
     storage = open_storage(config.state_db)
-    return storage, Portfolio(storage, config.risk.starting_cash_usd, mode=config.mode)
+    return storage, Portfolio(storage, config.risk.starting_cash_usd)
 
 
 def query_params(path: str) -> Dict[str, str]:
@@ -66,22 +66,6 @@ def int_param(params: Dict[str, str], name: str, default: int, maximum: int) -> 
         return max(1, min(maximum, int(params.get(name, default))))
     except (TypeError, ValueError):
         return default
-
-
-def is_authorized(handler: BaseHTTPRequestHandler) -> bool:
-    """Guard for endpoints that change state.
-
-    Vercel Cron sends `Authorization: Bearer $CRON_SECRET` when CRON_SECRET is
-    set on the project. We accept that, or the same value as `?key=`, so an
-    external scheduler (GitHub Actions, cron-job.org) can trigger it too.
-    """
-    secret = os.environ.get("CRON_SECRET", "").strip()
-    if not secret:
-        return False
-    header = handler.headers.get("Authorization", "")
-    if header == f"Bearer {secret}":
-        return True
-    return query_params(handler.path).get("key", "") == secret
 
 
 class _Request:

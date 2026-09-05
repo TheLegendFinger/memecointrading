@@ -125,10 +125,6 @@ def config() -> BotConfig:
     cfg = BotConfig()
     cfg.state_db = ":memory:"
     cfg.risk.starting_cash_usd = 1_000.0
-    # Deterministic, frictionless-by-default execution for tests that only care
-    # about the surrounding logic; individual tests re-enable the friction.
-    cfg.execution.paper_failure_rate = 0.0
-    cfg.execution.paper_random_seed = 7
     return cfg
 
 

@@ -7,7 +7,7 @@ import pytest
 from memebot.config import BotConfig
 from memebot.console_view import ConsoleView, sparkline
 from memebot.engine import TradingEngine
-from memebot.execution.paper import PaperExecutor
+from tests.fakes import SimulatedExecutor
 from memebot.storage import Storage
 from tests.conftest import FakeDexScreener, make_pair
 
@@ -15,12 +15,11 @@ from tests.conftest import FakeDexScreener, make_pair
 @pytest.fixture
 def traded(config):
     """An engine that has actually bought something."""
-    config.execution.paper_failure_rate = 0.0
     hot = make_pair("BEST", chg_m5=12.0, chg_h1=55.0, vol_h1=400_000, vol_h24=960_000,
                     buys_m5=90, sells_m5=10, liquidity=700_000)
     market = FakeDexScreener([hot])
     engine = TradingEngine(config, storage=Storage(":memory:"), data=market,
-                           executor=PaperExecutor(config, data=market, rng=random.Random(3)))
+                           executor=SimulatedExecutor(config, data=market, rng=random.Random(3)))
     report = engine.run_cycle()
     return engine, report
 
@@ -73,18 +72,27 @@ def test_the_frame_lists_what_it_is_watching(traded):
 def test_an_empty_book_says_so(config):
     market = FakeDexScreener([])
     engine = TradingEngine(config, storage=Storage(":memory:"), data=market,
-                           executor=PaperExecutor(config, data=market, rng=random.Random(1)))
+                           executor=SimulatedExecutor(config, data=market, rng=random.Random(1)))
     frame = ConsoleView(force=True).frame(engine, engine.run_cycle())
     assert "nothing right now" in frame
 
 
-def test_live_mode_is_unmistakable(config):
-    config.mode = "live"
+def test_the_display_says_real_funds(config):
     market = FakeDexScreener([])
     engine = TradingEngine(config, storage=Storage(":memory:"), data=market,
-                           executor=PaperExecutor(config, data=market, rng=random.Random(1)))
+                           executor=SimulatedExecutor(config, data=market, rng=random.Random(1)))
     frame = ConsoleView(force=True).frame(engine, None)
     assert "LIVE" in frame and "real funds" in frame
+
+
+def test_a_dry_run_never_claims_funds_are_at_risk(config):
+    config.dry_run = True
+    market = FakeDexScreener([])
+    engine = TradingEngine(config, storage=Storage(":memory:"), data=market,
+                           executor=SimulatedExecutor(config, data=market, rng=random.Random(1)))
+    frame = ConsoleView(force=True).frame(engine, None)
+    assert "DRY RUN" in frame
+    assert "real funds" not in frame
 
 
 def test_the_frame_is_pure_ascii_when_the_console_cannot_do_better(traded, monkeypatch):
@@ -120,7 +128,7 @@ def test_the_engine_calls_the_view_after_every_cycle(config):
     calls = []
     market = FakeDexScreener([])
     engine = TradingEngine(config, storage=Storage(":memory:"), data=market,
-                           executor=PaperExecutor(config, data=market, rng=random.Random(1)),
+                           executor=SimulatedExecutor(config, data=market, rng=random.Random(1)),
                            on_cycle=lambda e, r: calls.append(r))
     engine.run_cycle()
     engine.run_cycle()
@@ -133,7 +141,7 @@ def test_a_broken_display_never_stops_the_bot(config):
 
     market = FakeDexScreener([])
     engine = TradingEngine(config, storage=Storage(":memory:"), data=market,
-                           executor=PaperExecutor(config, data=market, rng=random.Random(1)),
+                           executor=SimulatedExecutor(config, data=market, rng=random.Random(1)),
                            on_cycle=explode)
     report = engine.run_cycle()  # must not raise
     assert report.scanned == 0

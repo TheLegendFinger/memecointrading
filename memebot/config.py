@@ -15,7 +15,7 @@ from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .models import Mode, USDC_MINT, WSOL_MINT
+from .models import USDC_MINT, WSOL_MINT
 from .storage import resolve_state_target
 
 
@@ -128,15 +128,6 @@ class ExecutionConfig:
     # Flat per-swap network + priority fee, in USD, used by the paper model.
     network_fee_usd: float = 0.05
     priority_fee_usd: float = 0.35
-    # Extra simulated slippage on top of the size/liquidity impact model.
-    paper_base_slippage_bps: int = 30
-    # Paper fills fail this often, mimicking failed/expired Solana swaps.
-    paper_failure_rate: float = 0.02
-    # Ask Jupiter for a real route when simulating, instead of the built-in
-    # constant-product impact model. More realistic, but needs network access.
-    paper_use_live_quotes: bool = False
-    # Deterministic paper fills for reproducible runs (null == random).
-    paper_random_seed: object = None
     # Live only:
     rpc_url: str = "https://api.mainnet-beta.solana.com"
     # SOL held back from trading to pay network fees and token-account rent.
@@ -151,7 +142,6 @@ class ExecutionConfig:
 
 @dataclass
 class BotConfig:
-    mode: str = Mode.PAPER.value
     poll_interval_seconds: float = 30.0
     # A SQLite path, or a postgres:// URL for hosted/serverless deployments.
     state_db: str = "data/memebot.sqlite3"
@@ -165,17 +155,11 @@ class BotConfig:
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
 
     # ---- helpers ---------------------------------------------------------------
-    @property
-    def is_live(self) -> bool:
-        return self.mode == Mode.LIVE.value
-
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
     def validate(self) -> None:
         errors = []
-        if self.mode not in (Mode.PAPER.value, Mode.LIVE.value):
-            errors.append(f"mode must be 'paper' or 'live', got {self.mode!r}")
         if self.poll_interval_seconds < 1:
             errors.append("poll_interval_seconds must be >= 1")
         r = self.risk
@@ -238,7 +222,6 @@ def load_dotenv(path: str = ".env") -> None:
 
 
 _ENV_OVERRIDES = {
-    "MEMEBOT_MODE": ("mode", str),
     "MEMEBOT_POLL_INTERVAL": ("poll_interval_seconds", float),
     "MEMEBOT_LOG_LEVEL": ("log_level", str),
     "MEMEBOT_STARTING_CASH": ("risk.starting_cash_usd", float),
@@ -257,6 +240,29 @@ def _set_path(cfg: BotConfig, dotted: str, value: Any) -> None:
     setattr(target, parts[-1], value)
 
 
+# Settings that used to exist. A stale config should say what happened rather
+# than fail with "unknown key".
+REMOVED_KEYS = {
+    "mode": (
+        "paper trading has been removed - the bot trades for real, and only for real. "
+        "Delete the 'mode:' line from {path}."
+    ),
+}
+
+
+def _check_removed_keys(data: Dict[str, Any], path: str) -> None:
+    for key, message in REMOVED_KEYS.items():
+        if key in data:
+            raise ValueError(message.format(path=path))
+    execution = data.get("execution") or {}
+    stale = [k for k in execution if k.startswith("paper_")]
+    if stale:
+        raise ValueError(
+            f"{', '.join(sorted(stale))} no longer exist - they configured the paper "
+            f"trading simulator, which has been removed. Delete them from {path}."
+        )
+
+
 def load_config(path: Optional[str] = None, overrides: Optional[Dict[str, Any]] = None) -> BotConfig:
     """Build a BotConfig from an optional file, the environment, and overrides."""
     load_dotenv()
@@ -266,7 +272,9 @@ def load_config(path: Optional[str] = None, overrides: Optional[Dict[str, Any]] 
         p = Path(path)
         if not p.exists():
             raise FileNotFoundError(f"Config file not found: {path}")
-        _merge_into(cfg, _load_file(p))
+        data = _load_file(p)
+        _check_removed_keys(data, path)
+        _merge_into(cfg, data)
 
     for env_key, (dotted, caster) in _ENV_OVERRIDES.items():
         raw = os.environ.get(env_key)

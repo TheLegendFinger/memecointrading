@@ -3,7 +3,7 @@ import random
 import pytest
 
 from memebot.config import BotConfig
-from memebot.execution.paper import PaperExecutor
+from tests.fakes import SimulatedExecutor
 from memebot.models import Order, Side, Token
 from tests.conftest import make_pair
 
@@ -17,8 +17,8 @@ def _order(side=Side.BUY, price=0.01, usd=100.0, tokens=0.0, liquidity=250_000.0
 
 
 @pytest.fixture
-def executor(config: BotConfig) -> PaperExecutor:
-    return PaperExecutor(config, rng=random.Random(42))
+def executor(config: BotConfig) -> SimulatedExecutor:
+    return SimulatedExecutor(config, rng=random.Random(42))
 
 
 def test_buy_fill_pays_above_reference_and_charges_fees(executor):
@@ -61,8 +61,7 @@ def test_order_larger_than_tolerance_is_rejected(executor):
 
 
 def test_simulated_transaction_failures_happen(config):
-    config.execution.paper_failure_rate = 1.0
-    executor = PaperExecutor(config, rng=random.Random(1))
+    executor = SimulatedExecutor(config, rng=random.Random(1), failure_rate=1.0)
     fill = executor.execute(_order())
     assert not fill.ok
     assert "failed" in fill.error
@@ -82,7 +81,7 @@ def test_zero_size_orders_are_rejected(executor):
 
 
 def test_unknown_pool_depth_assumes_thin_market(config):
-    executor = PaperExecutor(config, rng=random.Random(3))
+    executor = SimulatedExecutor(config, rng=random.Random(3))
     order = Order(token=Token("mint", "X"), side=Side.BUY, reference_price=1.0,
                   usd_amount=50.0, slippage_bps=300)
     fill = executor.execute(order)
@@ -91,7 +90,7 @@ def test_unknown_pool_depth_assumes_thin_market(config):
 
 
 def test_seeded_runs_are_reproducible(config):
-    a = PaperExecutor(config, rng=random.Random(99)).execute(_order())
-    b = PaperExecutor(config, rng=random.Random(99)).execute(_order())
+    a = SimulatedExecutor(config, rng=random.Random(99)).execute(_order())
+    b = SimulatedExecutor(config, rng=random.Random(99)).execute(_order())
     assert a.price == b.price
     assert a.slippage_bps == b.slippage_bps

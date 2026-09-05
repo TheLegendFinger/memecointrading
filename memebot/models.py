@@ -23,11 +23,6 @@ class Side(str, Enum):
     SELL = "sell"
 
 
-class Mode(str, Enum):
-    PAPER = "paper"
-    LIVE = "live"
-
-
 @dataclass(frozen=True)
 class Token:
     """A tradable SPL token."""

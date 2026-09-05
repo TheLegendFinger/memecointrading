@@ -4,16 +4,17 @@ import time
 import pytest
 
 from memebot.engine import TradingEngine
-from memebot.execution.paper import PaperExecutor
+from tests.fakes import SimulatedExecutor
 from memebot.models import Fill, Order, Side
 from memebot.storage import Storage
 from tests.conftest import FakeDexScreener, make_pair
 
 
-def build_engine(config, pairs, seed=11):
+def build_engine(config, pairs, seed=11, failure_rate=0.0):
     market = FakeDexScreener(pairs)
     storage = Storage(":memory:")
-    executor = PaperExecutor(config, data=market, rng=random.Random(seed))
+    executor = SimulatedExecutor(config, data=market, rng=random.Random(seed),
+                                 failure_rate=failure_rate)
     engine = TradingEngine(config, storage=storage, data=market, executor=executor)
     return engine, market
 
@@ -157,8 +158,7 @@ def test_halt_on_daily_loss_stops_new_entries(config, hot_pair):
 
 
 def test_failed_orders_are_reported_and_leave_cash_untouched(config, hot_pair):
-    config.execution.paper_failure_rate = 1.0
-    engine, _ = build_engine(config, [hot_pair])
+    engine, _ = build_engine(config, [hot_pair], failure_rate=1.0)
     report = engine.run_cycle()
 
     assert not report.opened
@@ -183,7 +183,7 @@ def test_state_persists_across_engine_restarts(config, hot_pair, tmp_path):
     db = str(tmp_path / "engine.sqlite3")
     config.state_db = db
     market = FakeDexScreener([hot_pair])
-    executor = PaperExecutor(config, data=market, rng=random.Random(5))
+    executor = SimulatedExecutor(config, data=market, rng=random.Random(5))
     engine = TradingEngine(config, storage=Storage(db), data=market, executor=executor)
     engine.run_cycle()
     held = dict(engine.portfolio.positions)
@@ -193,7 +193,7 @@ def test_state_persists_across_engine_restarts(config, hot_pair, tmp_path):
     market2 = FakeDexScreener([hot_pair])
     revived = TradingEngine(
         config, storage=Storage(db), data=market2,
-        executor=PaperExecutor(config, data=market2, rng=random.Random(5)),
+        executor=SimulatedExecutor(config, data=market2, rng=random.Random(5)),
     )
     assert set(revived.portfolio.positions) == set(held)
     assert revived.portfolio.cash == pytest.approx(cash)
@@ -266,8 +266,7 @@ def test_trades_appear_in_the_activity_feed(config, hot_pair):
 
 
 def test_a_failed_order_is_reported_in_the_feed(config, hot_pair):
-    config.execution.paper_failure_rate = 1.0
-    engine, _ = build_engine(config, [hot_pair])
+    engine, _ = build_engine(config, [hot_pair], failure_rate=1.0)
     engine.run_cycle()
 
     errors = [e for e in engine.storage.list_events(limit=50) if e["kind"] == "error"]

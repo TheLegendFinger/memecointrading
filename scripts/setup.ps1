@@ -88,6 +88,6 @@ Write-Host '  Setup complete.' -ForegroundColor Green
 Write-Host ''
 Write-Host '  Start here (menu)      :  powershell -ExecutionPolicy Bypass -File scripts\start.ps1'
 Write-Host '  Check the market feeds :  powershell -ExecutionPolicy Bypass -File scripts\doctor.ps1'
-Write-Host '  Paper trade            :  powershell -ExecutionPolicy Bypass -File scripts\run.ps1'
-Write-Host '  Trade for real         :  powershell -ExecutionPolicy Bypass -File scripts\live.ps1'
+Write-Host '  Wallet                 :  powershell -ExecutionPolicy Bypass -File scripts\wallet.ps1'
+Write-Host '  Trade (REAL money)     :  powershell -ExecutionPolicy Bypass -File scripts\run.ps1'
 Write-Host ''

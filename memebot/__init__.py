@@ -1,7 +1,9 @@
 """memebot - a Solana memecoin trading bot.
 
-Paper trading by default; the same strategy, risk and execution pipeline can
-route real swaps through the Jupiter aggregator when `mode: live` is set.
+It trades real money through the Jupiter aggregator. There is no practice mode.
+
+The version is shown on the menu, so it doubles as a way to confirm an update
+actually landed.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"

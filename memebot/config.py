@@ -10,13 +10,17 @@ Precedence (highest first):
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from .models import USDC_MINT, WSOL_MINT
 from .storage import resolve_state_target
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -246,36 +250,109 @@ def _set_path(cfg: BotConfig, dotted: str, value: Any) -> None:
     setattr(target, parts[-1], value)
 
 
-# Settings that used to exist. A stale config should say what happened rather
-# than fail with "unknown key".
+# Settings that used to exist. A config.yaml written by an older copy of this
+# project's own setup script still carries them, so they are dropped with a
+# note rather than treated as an error - refusing to start over a line the
+# project itself wrote helps nobody.
 REMOVED_KEYS = {
-    "mode": (
-        "paper trading has been removed - the bot trades for real, and only for real. "
-        "Delete the 'mode:' line from {path}."
-    ),
-    "dry_run": (
-        "dry runs have been removed - the bot trades for real, and only for real. "
-        "Delete the 'dry_run:' line from {path}."
+    "mode": "paper trading is gone - the bot trades for real, and only for real",
+    "dry_run": "dry runs are gone - the bot trades for real, and only for real",
+}
+REMOVED_RISK_KEYS = {
+    "starting_cash_usd": (
+        "the wallet is the bankroll now, read from the chain at the start of every cycle"
     ),
 }
+PAPER_PREFIX = "paper_"
+PAPER_NOTE = "it configured the paper trading simulator, which is gone"
 
 
-def _check_removed_keys(data: Dict[str, Any], path: str) -> None:
-    for key, message in REMOVED_KEYS.items():
+def _is_removed(section: str, indent: int, key: str) -> bool:
+    """Whether `key` (at `indent`, inside top-level `section`) no longer exists."""
+    if indent == 0:
+        return key in REMOVED_KEYS
+    if section == "execution":
+        return key.startswith(PAPER_PREFIX)
+    if section == "risk":
+        return key in REMOVED_RISK_KEYS
+    return False
+
+
+def prune_removed_keys(data: Dict[str, Any]) -> List[str]:
+    """Strip settings that no longer exist, returning a note about each."""
+    notes: List[str] = []
+    for key, why in REMOVED_KEYS.items():
         if key in data:
-            raise ValueError(message.format(path=path))
-    execution = data.get("execution") or {}
-    stale = [k for k in execution if k.startswith("paper_")]
-    if stale:
-        raise ValueError(
-            f"{', '.join(sorted(stale))} no longer exist - they configured the paper "
-            f"trading simulator, which has been removed. Delete them from {path}."
-        )
-    if "starting_cash_usd" in (data.get("risk") or {}):
-        raise ValueError(
-            "risk.starting_cash_usd no longer exists - the wallet is the bankroll, read "
-            f"from the chain at the start of every cycle. Delete it from {path}."
-        )
+            data.pop(key)
+            notes.append(f"{key}: {why}")
+    execution = data.get("execution")
+    if isinstance(execution, dict):
+        for key in sorted(k for k in execution if k.startswith(PAPER_PREFIX)):
+            execution.pop(key)
+            notes.append(f"execution.{key}: {PAPER_NOTE}")
+    risk = data.get("risk")
+    if isinstance(risk, dict):
+        for key, why in REMOVED_RISK_KEYS.items():
+            if key in risk:
+                risk.pop(key)
+                notes.append(f"risk.{key}: {why}")
+    return notes
+
+
+def _yaml_without_removed_keys(text: str) -> str:
+    """Delete the removed settings from YAML text, comments and all else intact.
+
+    Line-based on purpose: re-dumping the file through PyYAML would throw away
+    every comment in it, and the file is mostly comments.
+    """
+    out: List[str] = []
+    pending: List[str] = []
+    section = ""
+    dropping_indent: Optional[int] = None
+    for line in text.splitlines(True):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            pending.append(line)
+            continue
+        indent = len(line) - len(line.lstrip())
+        if dropping_indent is not None:
+            if indent > dropping_indent:
+                pending = [x for x in pending if not x.strip()]
+                continue
+            dropping_indent = None
+        key = stripped.split(":", 1)[0].strip()
+        if indent == 0:
+            section = key
+        if _is_removed(section, indent, key):
+            # The comment block written directly above it goes too; blank lines
+            # and anything before them are somebody else's, so they stay.
+            while pending and pending[-1].strip().startswith("#"):
+                pending.pop()
+            dropping_indent = indent
+            continue
+        out.extend(pending)
+        pending = []
+        out.append(line)
+    out.extend(pending)
+    # A removed line can leave two blank lines where there was one.
+    return re.sub(r"\n{3,}", "\n\n", "".join(out))
+
+
+def tidy_config_file(path: Path) -> bool:
+    """Rewrite `path` without the removed settings. False if it could not be."""
+    try:
+        text = path.read_text()
+        if path.suffix.lower() in (".yaml", ".yml"):
+            cleaned = _yaml_without_removed_keys(text)
+        else:
+            data = json.loads(text or "{}")
+            prune_removed_keys(data)
+            cleaned = json.dumps(data, indent=2) + "\n"
+        if cleaned != text:
+            path.write_text(cleaned)
+        return True
+    except (OSError, ValueError):  # read-only deploys, odd encodings, bad JSON
+        return False
 
 
 def load_config(path: Optional[str] = None, overrides: Optional[Dict[str, Any]] = None) -> BotConfig:
@@ -288,7 +365,12 @@ def load_config(path: Optional[str] = None, overrides: Optional[Dict[str, Any]] 
         if not p.exists():
             raise FileNotFoundError(f"Config file not found: {path}")
         data = _load_file(p)
-        _check_removed_keys(data, path)
+        notes = prune_removed_keys(data)
+        if notes:
+            tidied = tidy_config_file(p)
+            where = f"removed from {path}" if tidied else f"ignored in {path}"
+            for note in notes:
+                logger.warning("%s (%s)", note, where)
         _merge_into(cfg, data)
 
     for env_key, (dotted, caster) in _ENV_OVERRIDES.items():

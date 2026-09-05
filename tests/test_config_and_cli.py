@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -15,25 +16,113 @@ def test_there_is_no_trading_mode_any_more():
     assert not hasattr(cfg, "mode")
 
 
-def test_a_config_still_asking_for_a_dry_run_says_what_happened(tmp_path):
+def test_a_config_still_asking_for_a_dry_run_starts_anyway(tmp_path, caplog):
+    """An older setup script wrote that line, so it is cleaned out, not fatal."""
     path = tmp_path / "config.yaml"
-    path.write_text("dry_run: true\n")
-    with pytest.raises(ValueError, match="dry runs have been removed"):
-        load_config(str(path))
+    path.write_text("dry_run: true\npoll_interval_seconds: 45\n")
+    with caplog.at_level("WARNING"):
+        cfg = load_config(str(path))
+    assert cfg.poll_interval_seconds == 45
+    assert "dry runs are gone" in caplog.text
+    assert "dry_run" not in path.read_text(), "and it never complains twice"
 
 
-def test_a_config_still_asking_for_paper_mode_says_what_happened(tmp_path):
+def test_a_config_still_asking_for_paper_mode_starts_anyway(tmp_path, caplog):
     path = tmp_path / "config.yaml"
-    path.write_text("mode: paper\n")
-    with pytest.raises(ValueError, match="paper trading has been removed"):
-        load_config(str(path))
+    path.write_text("mode: paper\nlog_level: DEBUG\n")
+    with caplog.at_level("WARNING"):
+        cfg = load_config(str(path))
+    assert cfg.log_level == "DEBUG"
+    assert "paper trading is gone" in caplog.text
+    assert "mode" not in path.read_text()
 
 
-def test_a_config_with_the_old_simulator_settings_says_what_happened(tmp_path):
+def test_a_config_with_the_old_simulator_settings_starts_anyway(tmp_path, caplog):
     path = tmp_path / "config.yaml"
-    path.write_text("execution:\n  paper_failure_rate: 0.02\n")
-    with pytest.raises(ValueError, match="no longer exist"):
-        load_config(str(path))
+    path.write_text(
+        "execution:\n  paper_failure_rate: 0.02\n  slippage_bps: 150\n"
+    )
+    with caplog.at_level("WARNING"):
+        cfg = load_config(str(path))
+    assert cfg.execution.slippage_bps == 150, "the settings around it survive"
+    assert "paper trading simulator" in caplog.text
+    assert "paper_failure_rate" not in path.read_text()
+
+
+def test_the_comments_and_the_rest_of_the_file_survive_the_cleanup(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "# memebot configuration\n"
+        "poll_interval_seconds: 45\n"
+        "\n"
+        "risk:\n"
+        "  # what the simulator used to start with\n"
+        "  starting_cash_usd: 100\n"
+        "  max_open_positions: 3   # keep me\n"
+    )
+    load_config(str(path))
+    text = path.read_text()
+    assert "# memebot configuration" in text
+    assert "max_open_positions: 3   # keep me" in text
+    assert "starting_cash_usd" not in text
+    assert "what the simulator used to start with" not in text
+
+
+OLD_EXAMPLE = """# memebot configuration - copy to config.yaml and edit.
+# Anything omitted uses the built-in default.
+
+# "paper" simulates fills locally. "live" broadcasts real swaps.
+mode: paper
+poll_interval_seconds: 30
+
+dry_run: false          # evaluate and log decisions, never send an order
+
+risk:
+  starting_cash_usd: 1000         # paper bankroll
+  max_open_positions: 4
+
+execution:
+  paper_base_slippage_bps: 30
+  slippage_bps: 150
+"""
+
+
+def test_the_config_the_old_setup_script_wrote_still_runs(tmp_path):
+    """Whatever this project has ever generated has to keep working."""
+    path = tmp_path / "config.yaml"
+    path.write_text(OLD_EXAMPLE)
+
+    cfg = load_config(str(path))
+    assert cfg.poll_interval_seconds == 30
+    assert cfg.risk.max_open_positions == 4
+    assert cfg.execution.slippage_bps == 150
+
+    cleaned = path.read_text()
+    assert cleaned.startswith("# memebot configuration"), "the header is not ours to eat"
+    assert "built-in default" in cleaned
+    for gone in ("mode:", "dry_run:", "starting_cash_usd", "paper_base_slippage_bps",
+                 "simulates fills locally", "paper bankroll"):
+        assert gone not in cleaned
+    assert "\n\n\n" not in cleaned, "no holes where the lines were"
+
+    load_config(str(path))
+    assert path.read_text() == cleaned, "and it settles after one pass"
+
+
+def test_a_config_that_cannot_be_rewritten_still_loads(tmp_path, monkeypatch, caplog):
+    """A read-only deploy cannot be tidied; the stale keys are ignored anyway."""
+    path = tmp_path / "config.yaml"
+    path.write_text("dry_run: true\npoll_interval_seconds: 45\n")
+
+    def refuse(self, *a, **kw):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(Path, "write_text", refuse)
+    with caplog.at_level("WARNING"):
+        cfg = load_config(str(path))
+    assert cfg.poll_interval_seconds == 45
+    assert "ignored in" in caplog.text
+    assert path.read_text().startswith("dry_run: true")
 
 
 def test_yaml_file_overrides_defaults(tmp_path):
@@ -84,11 +173,14 @@ def test_explicit_overrides_beat_the_environment(tmp_path, monkeypatch):
     assert cfg.risk.max_open_positions == 2
 
 
-def test_a_config_still_setting_a_bankroll_says_what_happened(tmp_path):
+def test_a_config_still_setting_a_bankroll_starts_anyway(tmp_path, caplog):
     path = tmp_path / "config.yaml"
-    path.write_text("risk:\n  starting_cash_usd: 1000\n")
-    with pytest.raises(ValueError, match="wallet is the bankroll"):
-        load_config(str(path))
+    path.write_text("risk:\n  starting_cash_usd: 1000\n  max_open_positions: 2\n")
+    with caplog.at_level("WARNING"):
+        cfg = load_config(str(path))
+    assert cfg.risk.max_open_positions == 2
+    assert not hasattr(cfg.risk, "starting_cash_usd")
+    assert "wallet is the bankroll" in caplog.text
 
 
 @pytest.mark.parametrize(

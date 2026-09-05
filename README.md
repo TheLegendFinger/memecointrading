@@ -37,7 +37,7 @@ time, then opens a menu — everything is a number:
 ```
   ╋╋╋╋╋╋╋╋╋╋┏┓╋╋┏┓
   ┏━━┳━┳━━┳━┫┗┳━┫┗┓
-  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.1.0
+  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.1.1
   ┗┻┻┻━┻┻┻┻━┻━┻━┻━┛   LIVE - real money
 
    $1,043.18 · $812.40 cash · 2 open · +4.32%
@@ -340,6 +340,11 @@ platform, and a cycle that times out mid-swap is a position you did not intend.
 `config.example.yaml` documents every knob. Precedence is
 **CLI flags > environment (`MEMEBOT_*`) > config file > defaults**, and unknown
 keys are rejected at startup rather than silently ignored.
+
+Settings that used to exist and no longer do - `mode`, `dry_run`,
+`risk.starting_cash_usd`, the `execution.paper_*` group - are the exception:
+older versions of this project wrote them into your `config.yaml` themselves,
+so they are logged once, deleted from the file, and the bot starts anyway.
 
 Worth tuning first:
 

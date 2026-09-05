@@ -175,6 +175,24 @@ class Storage:
                     key   {d.text} PRIMARY KEY,
                     value {d.text} NOT NULL
                 )""",
+            f"""CREATE TABLE IF NOT EXISTS events (
+                    id      {d.serial_pk},
+                    ts      {d.real} NOT NULL,
+                    kind    {d.text} NOT NULL,
+                    level   {d.text} NOT NULL DEFAULT 'info',
+                    symbol  {d.text},
+                    address {d.text},
+                    message {d.text} NOT NULL,
+                    detail  {d.text}
+                )""",
+            "CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts)",
+            f"""CREATE TABLE IF NOT EXISTS price_samples (
+                    address {d.text} NOT NULL,
+                    ts      {d.real} NOT NULL,
+                    price   {d.real} NOT NULL,
+                    PRIMARY KEY (address, ts)
+                )""",
+            "CREATE INDEX IF NOT EXISTS idx_samples_addr_ts ON price_samples(address, ts)",
             f"""CREATE TABLE IF NOT EXISTS equity (
                     ts        {d.real} PRIMARY KEY,
                     cash      {d.real} NOT NULL,
@@ -328,6 +346,72 @@ class Storage:
             "total_fees_usd": float(fees_row.get("f") or 0.0),
         }
 
+    # ---- events ----------------------------------------------------------------
+    def record_event(
+        self,
+        kind: str,
+        message: str,
+        symbol: str = "",
+        address: str = "",
+        level: str = "info",
+        detail: str = "",
+        ts: Optional[float] = None,
+    ) -> None:
+        """Append one line to the activity feed the live view reads."""
+        self.execute(
+            """INSERT INTO events(ts, kind, level, symbol, address, message, detail)
+               VALUES(?,?,?,?,?,?,?)""",
+            (ts if ts is not None else time.time(), kind, level, symbol, address, message, detail),
+        )
+        self._commit()
+
+    def list_events(self, limit: int = 200, since_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Newest first, or everything after `since_id` for incremental polling."""
+        if since_id is not None:
+            return self._fetchall(
+                "SELECT * FROM events WHERE id > ? ORDER BY id ASC LIMIT ?", (since_id, limit)
+            )
+        return self._fetchall("SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,))
+
+    def prune_events(self, keep: int = 2000) -> None:
+        """Keep the feed bounded - it is a rolling log, not an archive."""
+        row = self._fetchone(
+            "SELECT id FROM events ORDER BY id DESC LIMIT 1 OFFSET ?", (keep,)
+        )
+        if row:
+            self.execute("DELETE FROM events WHERE id <= ?", (row["id"],))
+            self._commit()
+
+    # ---- price samples ---------------------------------------------------------
+    def record_price_sample(self, address: str, price: float, ts: Optional[float] = None) -> None:
+        """One observed price. Enough of these make a candle chart even when no
+        external OHLC source is reachable."""
+        if price <= 0:
+            return
+        self.execute(
+            """INSERT INTO price_samples(address, ts, price) VALUES(?,?,?)
+               ON CONFLICT(address, ts) DO UPDATE SET price = excluded.price""",
+            (address, ts if ts is not None else time.time(), price),
+        )
+        self._commit()
+
+    def price_samples(self, address: str, since: float = 0.0, limit: int = 5000) -> List[Dict[str, Any]]:
+        return self._fetchall(
+            "SELECT ts, price FROM price_samples WHERE address = ? AND ts >= ? "
+            "ORDER BY ts ASC LIMIT ?",
+            (address, since, limit),
+        )
+
+    def sampled_addresses(self, since: float = 0.0) -> List[str]:
+        rows = self._fetchall(
+            "SELECT DISTINCT address FROM price_samples WHERE ts >= ?", (since,)
+        )
+        return [row["address"] for row in rows]
+
+    def prune_price_samples(self, older_than: float) -> None:
+        self.execute("DELETE FROM price_samples WHERE ts < ?", (older_than,))
+        self._commit()
+
     # ---- equity curve ----------------------------------------------------------
     def record_equity(self, cash: float, positions_value: float, ts: Optional[float] = None) -> None:
         ts = ts if ts is not None else time.time()
@@ -355,7 +439,7 @@ class Storage:
         return float(row["equity"]) if row else None
 
     def reset(self) -> None:
-        for table in ("trades", "positions", "state", "equity"):
+        for table in ("trades", "positions", "state", "equity", "events", "price_samples"):
             self.execute(f"DELETE FROM {table}")
         self._commit()
 

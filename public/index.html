@@ -22,6 +22,12 @@
     --critical:       #d03b3b;
     --warning:        #fab219;
     --chip:           rgba(11, 11, 11, 0.05);
+    --critical:       #d03b3b;
+    --warning:        #fab219;
+    /* Candle direction. Fixed status hues - the tooltip and axis carry the
+       numbers too, so colour is never the only channel. */
+    --up:             #0ca30c;
+    --down:           #d03b3b;
   }
   @media (prefers-color-scheme: dark) {
     :root:where(:not([data-theme="light"])) {
@@ -38,6 +44,8 @@
       --good:           #0ca30c;
       --critical:       #d03b3b;
       --chip:           rgba(255, 255, 255, 0.07);
+      --up:             #0ca30c;
+      --down:           #d03b3b;
     }
   }
   :root[data-theme="dark"] {
@@ -54,6 +62,8 @@
     --good:           #0ca30c;
     --critical:       #d03b3b;
     --chip:           rgba(255, 255, 255, 0.07);
+    --up:             #0ca30c;
+    --down:           #d03b3b;
   }
 
   * { box-sizing: border-box; }
@@ -154,6 +164,83 @@
     background: var(--chip); padding: 1px 5px; border-radius: 4px;
   }
   footer { color: var(--text-muted); font-size: 12px; margin-top: 24px; }
+
+  /* tabs */
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+  .tab {
+    font: inherit; font-weight: 600; font-size: 13px; cursor: pointer;
+    padding: 7px 14px; border-radius: 8px; border: 1px solid transparent;
+    background: transparent; color: var(--text-muted);
+  }
+  .tab:hover { color: var(--text-primary); }
+  .tab[aria-selected="true"] {
+    background: var(--surface-1); border-color: var(--border); color: var(--text-primary);
+  }
+
+  /* live layout: chart left, feed right */
+  .live-grid { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
+  @media (max-width: 900px) { .live-grid { grid-template-columns: minmax(0, 1fr); } }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+  .token-chip {
+    font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+    padding: 4px 10px; border-radius: 999px;
+    border: 1px solid var(--border); background: transparent; color: var(--text-secondary);
+  }
+  .token-chip:hover { color: var(--text-primary); }
+  .token-chip[aria-pressed="true"] {
+    background: var(--series-1); border-color: var(--series-1); color: #fff;
+  }
+  .token-chip .live-dot {
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--good); margin-right: 5px; vertical-align: middle;
+  }
+
+  .chart-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+  .chart-head .sym { font-size: 17px; font-weight: 600; }
+  .chart-head .price { font-size: 17px; font-variant-numeric: tabular-nums; }
+  .tf-group { display: flex; gap: 2px; margin-left: auto; }
+  .tf {
+    font: inherit; font-size: 12px; cursor: pointer; padding: 3px 9px; border-radius: 6px;
+    border: 1px solid transparent; background: transparent; color: var(--text-muted);
+  }
+  .tf[aria-pressed="true"] { border-color: var(--border); color: var(--text-primary); background: var(--chip); }
+
+  svg.candles { display: block; width: 100%; height: 340px; overflow: visible; }
+  .candle-up   { fill: var(--up);   stroke: var(--up);   stroke-width: 1; }
+  .candle-down { fill: var(--down); stroke: var(--down); stroke-width: 1; }
+  .wick-up   { stroke: var(--up);   stroke-width: 1.5; }
+  .wick-down { stroke: var(--down); stroke-width: 1.5; }
+  .marker-buy  { fill: var(--good);     stroke: var(--surface-1); stroke-width: 2; }
+  .marker-sell { fill: var(--critical); stroke: var(--surface-1); stroke-width: 2; }
+  .entry-line { stroke: var(--series-1); stroke-width: 1.5; stroke-dasharray: 5 4; opacity: 0.9; }
+  .entry-tag { fill: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .chart-legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-secondary); margin-top: 10px; }
+  .chart-legend .key { display: inline-flex; align-items: center; gap: 6px; }
+  .source-note { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
+
+  /* activity feed */
+  .feed { max-height: 620px; overflow-y: auto; margin: -4px -4px 0; padding: 4px; }
+  .feed-item {
+    display: grid; grid-template-columns: 20px 1fr; gap: 8px;
+    padding: 8px 10px; border-radius: 8px; border-left: 3px solid var(--gridline);
+    margin-bottom: 4px; background: var(--surface-1);
+  }
+  .feed-item.is-new { animation: flash 1.4s ease-out; }
+  @keyframes flash { from { background: var(--chip); } to { background: var(--surface-1); } }
+  .feed-item .icon { font-size: 12px; line-height: 1.5; text-align: center; }
+  .feed-item .msg { font-size: 13px; }
+  .feed-item .meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .feed-item.k-buy   { border-left-color: var(--good); }
+  .feed-item.k-sell  { border-left-color: var(--critical); }
+  .feed-item.k-win   { border-left-color: var(--good); }
+  .feed-item.k-error { border-left-color: var(--critical); }
+  .feed-item.k-halt  { border-left-color: var(--warning); }
+  .feed-item.k-start, .feed-item.k-stop { border-left-color: var(--series-1); }
+  .feed-item .icon.up { color: var(--good); }
+  .feed-item .icon.down { color: var(--critical); }
+  .feed-item .icon.warn { color: var(--warning); }
+  .feed-item .icon.info { color: var(--text-muted); }
 </style>
 </head>
 <body>
@@ -169,6 +256,75 @@
 
   <div id="banner-slot"></div>
 
+  <div class="tabs" role="tablist">
+    <button class="tab" id="tab-live" role="tab" aria-selected="true"
+            aria-controls="view-live">Live</button>
+    <button class="tab" id="tab-overview" role="tab" aria-selected="false"
+            aria-controls="view-overview">Overview</button>
+  </div>
+
+  <div id="view-live" role="tabpanel" aria-labelledby="tab-live">
+    <div class="live-grid">
+      <div>
+        <section class="card">
+          <div class="chips" id="token-chips"></div>
+
+          <div class="chart-head">
+            <span class="sym" id="chart-symbol">—</span>
+            <span class="price" id="chart-price"></span>
+            <span class="muted" id="chart-position"></span>
+            <span class="tf-group" id="tf-group">
+              <button class="tf" data-tf="5m" aria-pressed="true">5m</button>
+              <button class="tf" data-tf="15m" aria-pressed="false">15m</button>
+              <button class="tf" data-tf="1h" aria-pressed="false">1h</button>
+              <button class="tf" id="scale-toggle" title="Log price scale"
+                      aria-pressed="false" style="margin-left:8px">log</button>
+            </span>
+          </div>
+
+          <div class="chart-wrap">
+            <svg class="candles" id="candle-chart" role="img"
+                 aria-label="Price candles with this bot's entries and exits"></svg>
+            <div class="tooltip" id="candle-tooltip"></div>
+          </div>
+          <div id="candle-empty" class="empty" hidden>
+            No price history yet — it fills in as the bot watches the market.
+          </div>
+
+          <div class="chart-legend">
+            <span class="key">
+              <svg width="12" height="12" aria-hidden="true"><polygon points="6,1 11,10 1,10" fill="var(--good)"/></svg>
+              bought
+            </span>
+            <span class="key">
+              <svg width="12" height="12" aria-hidden="true"><polygon points="6,11 11,2 1,2" fill="var(--critical)"/></svg>
+              sold
+            </span>
+            <span class="key">
+              <svg width="18" height="12" aria-hidden="true"><line x1="0" y1="6" x2="18" y2="6"
+                   stroke="var(--series-1)" stroke-width="1.5" stroke-dasharray="4 3"/></svg>
+              average entry
+            </span>
+          </div>
+          <div class="source-note" id="chart-source"></div>
+        </section>
+
+        <section class="card">
+          <h2>Fills on this token</h2>
+          <div class="scroll"><table id="token-fills"></table></div>
+        </section>
+      </div>
+
+      <div>
+        <section class="card">
+          <h2>What it is doing</h2>
+          <div class="feed" id="feed"></div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <div id="view-overview" role="tabpanel" aria-labelledby="tab-overview" hidden>
   <section class="card">
     <h2>Portfolio</h2>
     <div class="tiles" id="tiles"></div>
@@ -200,6 +356,7 @@
     <h2>Recent trades</h2>
     <div class="scroll"><table id="trades"></table></div>
   </section>
+  </div>
 
   <footer>
     Paper trading unless the mode badge says otherwise. Auto-refreshes every 20s.
@@ -490,6 +647,406 @@
       }).join("") + "</tbody>";
   }
 
+
+  /* ------------------------------------------------------------ live view */
+  var live = {
+    address: "",
+    timeframe: "5m",
+    logScale: null,      // null = decide from the data
+    candles: [],
+    markers: [],
+    geometry: null,
+    lastEventId: 0,
+    seenIds: {},
+    tab: "live"
+  };
+
+  function switchTab(name) {
+    live.tab = name;
+    $("view-live").hidden = name !== "live";
+    $("view-overview").hidden = name !== "overview";
+    $("tab-live").setAttribute("aria-selected", String(name === "live"));
+    $("tab-overview").setAttribute("aria-selected", String(name === "overview"));
+    try { localStorage.setItem("memebot-tab", name); } catch (e) {}
+    if (name === "live") { refreshLive(); }
+  }
+
+  /* ---- token chips ---- */
+  function renderChips(tokens) {
+    var box = $("token-chips");
+    if (!tokens.length) {
+      box.innerHTML = '<span class="muted">Nothing traded yet.</span>';
+      return;
+    }
+    box.innerHTML = "";
+    tokens.forEach(function (t) {
+      var button = document.createElement("button");
+      button.className = "token-chip";
+      button.setAttribute("aria-pressed", String(t.address === live.address));
+      if (t.open) {
+        var dot = document.createElement("span");
+        dot.className = "live-dot";
+        button.appendChild(dot);
+      }
+      // Symbols come from the market feed - insert as text, never as markup.
+      button.appendChild(document.createTextNode(t.symbol));
+      button.addEventListener("click", function () {
+        live.address = t.address;
+        loadCandles();
+      });
+      box.appendChild(button);
+    });
+  }
+
+  /* ---- candlestick chart ---- */
+  function logTicks(lo, hi) {
+    // 1 / 2 / 5 x 10^k, which is how a reader expects a log axis to be labelled.
+    var out = [];
+    var start = Math.floor(Math.log10(lo));
+    var end = Math.ceil(Math.log10(hi));
+    for (var k = start; k <= end; k++) {
+      [1, 2, 5].forEach(function (m) {
+        var v = m * Math.pow(10, k);
+        if (v >= lo && v <= hi) out.push(v);
+      });
+    }
+    while (out.length > 6) {
+      out = out.filter(function (_v, i) { return i % 2 === 0; });
+    }
+    return out;
+  }
+
+  function renderCandles() {
+    var svg = $("candle-chart");
+    var data = live.candles;
+    var empty = data.length < 2;
+    $("candle-empty").hidden = !empty;
+    if (empty) { svg.setAttribute("hidden", ""); svg.innerHTML = ""; return; }
+    svg.removeAttribute("hidden");
+
+    var rect = svg.getBoundingClientRect();
+    var W = rect.width || 700, H = rect.height || 340;
+    var pad = { top: 14, right: 66, bottom: 26, left: 8 };
+    var plotW = W - pad.left - pad.right;
+    var plotH = H - pad.top - pad.bottom;
+
+    var lo = Infinity, hi = -Infinity;
+    data.forEach(function (c) { lo = Math.min(lo, c.low); hi = Math.max(hi, c.high); });
+    live.markers.forEach(function (m) {
+      if (m.price > 0) { lo = Math.min(lo, m.price); hi = Math.max(hi, m.price); }
+    });
+    if (!(hi > lo)) { hi = lo * 1.01 + 1e-12; lo = lo * 0.99; }
+    // A memecoin that falls 20x makes a linear axis useless - one giant candle
+    // squashes everything recent into a hairline. Log is the default once the
+    // range is that wide, and the axis says so.
+    var ratio = lo > 0 ? hi / lo : 1;
+    var useLog = live.logScale === null ? (ratio > 4 && lo > 0) : (live.logScale && lo > 0);
+    $("scale-toggle").setAttribute("aria-pressed", String(useLog));
+
+    var y, ticks;
+    if (useLog) {
+      var l0 = Math.log10(lo), l1 = Math.log10(hi);
+      var lPad = (l1 - l0) * 0.06;
+      l0 -= lPad; l1 += lPad;
+      y = function (v) {
+        var lv = Math.log10(Math.max(v, 1e-18));
+        return pad.top + (1 - (lv - l0) / (l1 - l0)) * plotH;
+      };
+      ticks = logTicks(Math.pow(10, l0), Math.pow(10, l1));
+    } else {
+      var padY = (hi - lo) * 0.08;
+      lo -= padY; hi += padY;
+      y = function (v) { return pad.top + (1 - (v - lo) / (hi - lo)) * plotH; };
+      ticks = niceTicks(lo, hi, 4);
+    }
+
+    var step = plotW / data.length;
+    var bodyW = Math.max(1, Math.min(14, step * 0.62));   // thin marks, air between
+    var x = function (i) { return pad.left + step * (i + 0.5); };
+    live.geometry = { x: x, y: y, step: step, pad: pad, W: W, H: H, log: useLog };
+
+    var parts = [];
+
+    // recessive gridlines + right-hand price ticks
+    parts.push('<g class="grid">' + ticks.map(function (t) {
+      return '<line x1="' + pad.left + '" x2="' + (W - pad.right) + '" y1="' + y(t).toFixed(1) +
+             '" y2="' + y(t).toFixed(1) + '"/>';
+    }).join("") + "</g>");
+    parts.push("<g>" + ticks.map(function (t) {
+      return '<text class="tick" x="' + (W - pad.right + 8) + '" y="' + (y(t) + 4).toFixed(1) +
+             '">' + esc(price(t)) + "</text>";
+    }).join("") + "</g>");
+
+    // candles
+    data.forEach(function (c, i) {
+      var up = c.close >= c.open;
+      var cls = up ? "up" : "down";
+      var cx = x(i);
+      parts.push('<line class="wick-' + cls + '" x1="' + cx.toFixed(1) + '" x2="' + cx.toFixed(1) +
+                 '" y1="' + y(c.high).toFixed(1) + '" y2="' + y(c.low).toFixed(1) + '"/>');
+      var top = y(Math.max(c.open, c.close));
+      var bottom = y(Math.min(c.open, c.close));
+      var height = Math.max(1, bottom - top);
+      parts.push('<rect class="candle-' + cls + '" x="' + (cx - bodyW / 2).toFixed(1) +
+                 '" y="' + top.toFixed(1) + '" width="' + bodyW.toFixed(1) +
+                 '" height="' + height.toFixed(1) + '" rx="1"/>');
+    });
+
+    // average entry line, when a position is open
+    if (live.position && live.position.avg_price > 0) {
+      var ay = y(live.position.avg_price);
+      if (ay > pad.top && ay < H - pad.bottom) {
+        parts.push('<line class="entry-line" x1="' + pad.left + '" x2="' + (W - pad.right) +
+                   '" y1="' + ay.toFixed(1) + '" y2="' + ay.toFixed(1) + '"/>');
+        parts.push('<text class="entry-tag" x="' + (pad.left + 4) + '" y="' + (ay - 5).toFixed(1) +
+                   '">avg ' + esc(price(live.position.avg_price)) + "</text>");
+      }
+    }
+
+    // this bot's own fills - shape carries the meaning, colour reinforces it
+    var first = data[0].ts, last = data[data.length - 1].ts;
+    var span = (last - first) || 1;
+    live.markers.forEach(function (m) {
+      if (m.ts < first - span || m.ts > last + span) return;
+      var idx = 0, best = Infinity;
+      data.forEach(function (c, i) {
+        var d = Math.abs(c.ts - m.ts);
+        if (d < best) { best = d; idx = i; }
+      });
+      var cx = x(idx);
+      var candle = data[idx];
+      if (m.side === "buy") {
+        var by = y(candle.low) + 13;
+        parts.push('<polygon class="marker-buy" points="' +
+          cx + "," + (by - 9) + " " + (cx + 6) + "," + (by + 1) + " " + (cx - 6) + "," + (by + 1) +
+          '"/>');
+      } else {
+        var sy = y(candle.high) - 13;
+        parts.push('<polygon class="marker-sell" points="' +
+          cx + "," + (sy + 9) + " " + (cx + 6) + "," + (sy - 1) + " " + (cx - 6) + "," + (sy - 1) +
+          '"/>');
+      }
+    });
+
+    // time axis: first and last only
+    parts.push('<text class="tick" x="' + pad.left + '" y="' + (H - 6) + '">' +
+               esc(clock(first)) + "</text>");
+    parts.push('<text class="tick" text-anchor="end" x="' + (W - pad.right) + '" y="' + (H - 6) +
+               '">' + esc(clock(last)) + "</text>");
+
+    if (useLog) {
+      parts.push('<text class="tick" x="' + pad.left + '" y="' + (pad.top + 2) +
+                 '">log scale</text>');
+    }
+
+    parts.push('<g id="candle-hover" style="visibility:hidden">' +
+      '<line class="crosshair" id="candle-cross" y1="' + pad.top + '" y2="' + (H - pad.bottom) + '"/>' +
+      "</g>");
+
+    svg.innerHTML = parts.join("");
+  }
+
+  function bindCandleHover() {
+    var svg = $("candle-chart"), tip = $("candle-tooltip");
+    function hide() {
+      var layer = document.getElementById("candle-hover");
+      if (layer) layer.style.visibility = "hidden";
+      tip.style.opacity = 0;
+    }
+    svg.addEventListener("mouseleave", hide);
+    svg.addEventListener("mousemove", function (event) {
+      var g = live.geometry, data = live.candles;
+      if (!g || data.length < 2) return;
+      var box = svg.getBoundingClientRect();
+      var index = Math.round((event.clientX - box.left - g.pad.left) / g.step - 0.5);
+      index = Math.max(0, Math.min(data.length - 1, index));
+      var c = data[index];
+      var cx = g.x(index);
+
+      var layer = document.getElementById("candle-hover");
+      if (!layer) return;
+      layer.style.visibility = "visible";
+      var line = document.getElementById("candle-cross");
+      line.setAttribute("x1", cx);
+      line.setAttribute("x2", cx);
+
+      var change = c.open > 0 ? ((c.close - c.open) / c.open) * 100 : 0;
+      var rows = [
+        ["O", price(c.open)], ["H", price(c.high)],
+        ["L", price(c.low)], ["C", price(c.close)]
+      ];
+      tip.innerHTML =
+        '<div class="t-time">' + esc(clock(c.ts)) + "</div>" +
+        rows.map(function (r) {
+          return '<div class="t-row"><span class="t-key">' + r[0] + "</span><span>" +
+                 esc(r[1]) + "</span></div>";
+        }).join("") +
+        '<div class="t-row"><span class="t-key">change</span><span class="' +
+        signClass(change) + '">' + pct(change) + "</span></div>" +
+        (c.volume ? '<div class="t-row"><span class="t-key">volume</span><span>' +
+                    money(c.volume, 0) + "</span></div>" : "");
+
+      // any of this bot's fills inside that candle
+      var seconds = data.length > 1 ? (data[1].ts - data[0].ts) : 300;
+      var hits = live.markers.filter(function (m) { return m.ts >= c.ts && m.ts < c.ts + seconds; });
+      hits.forEach(function (m) {
+        tip.innerHTML += '<div class="t-row"><span class="t-key">' +
+          (m.side === "buy" ? "bought" : "sold") + "</span><span>" +
+          esc(price(m.price)) + " · " + money(m.usd) + "</span></div>";
+      });
+
+      tip.style.opacity = 1;
+      var tipW = tip.offsetWidth;
+      tip.style.left = Math.max(0, Math.min(g.W - tipW, cx - tipW / 2)) + "px";
+      tip.style.top = Math.max(0, g.y(c.high) - tip.offsetHeight - 12) + "px";
+    });
+  }
+
+  function renderTokenFills(markers, symbol) {
+    var table = $("token-fills");
+    if (!markers.length) {
+      table.innerHTML = '<tbody><tr><td class="empty">No fills on ' +
+        esc(symbol || "this token") + " yet.</td></tr></tbody>";
+      return;
+    }
+    var rows = markers.slice().sort(function (a, b) { return b.ts - a.ts; }).slice(0, 12);
+    table.innerHTML =
+      "<thead><tr><th>Time</th><th>Side</th><th>Price</th><th>USD</th><th>P&L</th>" +
+      '<th class="reason">Why</th></tr></thead><tbody>' +
+      rows.map(function (m) {
+        var pnl = m.side === "sell"
+          ? '<span class="' + signClass(m.realized_pnl) + '">' + money(m.realized_pnl) + "</span>"
+          : '<span class="muted">—</span>';
+        return "<tr>" +
+          '<td class="muted">' + esc(clock(m.ts)) + "</td>" +
+          '<td class="side-' + esc(m.side) + '">' + esc(m.side.toUpperCase()) + "</td>" +
+          "<td>" + price(m.price) + "</td>" +
+          "<td>" + money(m.usd) + "</td>" +
+          "<td>" + pnl + "</td>" +
+          '<td class="reason" title="' + esc(m.reason) + '">' + esc(m.reason) + "</td>" +
+        "</tr>";
+      }).join("") + "</tbody>";
+  }
+
+  function loadCandles() {
+    var query = "/api/candles?timeframe=" + encodeURIComponent(live.timeframe) +
+                (live.address ? "&address=" + encodeURIComponent(live.address) : "");
+    return getJSON(query).then(function (data) {
+      live.address = data.address || "";
+      live.candles = data.candles || [];
+      live.markers = data.markers || [];
+      live.position = data.position || null;
+
+      renderChips(data.tokens || []);
+      $("chart-symbol").textContent = data.symbol || "—";
+
+      var last = live.candles.length ? live.candles[live.candles.length - 1] : null;
+      $("chart-price").textContent = last ? price(last.close) : "";
+
+      var posEl = $("chart-position");
+      if (data.position) {
+        posEl.textContent = "holding " +
+          Number(data.position.quantity).toLocaleString("en-US", { maximumFractionDigits: 2 }) +
+          " · " + pct(data.position.unrealized_pnl_pct);
+        posEl.className = signClass(data.position.unrealized_pnl_pct);
+      } else {
+        posEl.textContent = "";
+        posEl.className = "muted";
+      }
+
+      var effective = data.effective_timeframe || data.timeframe;
+      var note = "";
+      if (data.source === "geckoterminal") {
+        note = "Real " + effective + " candles from GeckoTerminal.";
+      } else if (live.candles.length) {
+        note = "Built from the bot's own price observations, in " + effective + " buckets";
+        if (effective !== data.timeframe) {
+          note += data.bucket_seconds > data.requested_seconds
+            ? " (wider than " + data.timeframe + " — it polls slower than that)."
+            : " (narrower than " + data.timeframe + " — it has not been running long).";
+        } else {
+          note += ".";
+        }
+      }
+      $("chart-source").textContent = note;
+
+      renderCandles();
+      renderTokenFills(live.markers, data.symbol);
+    });
+  }
+
+  /* ---- activity feed ---- */
+  var FEED_ICONS = {
+    buy: ["▲", "up"], sell: ["▼", "down"], error: ["!", "warn"],
+    halt: ["■", "warn"], start: ["▶", "info"], stop: ["■", "info"],
+    cycle: ["·", "info"], dry_run: ["○", "info"]
+  };
+
+  function feedRow(event, isNew) {
+    var item = document.createElement("div");
+    var kind = event.kind === "sell" && event.level === "win" ? "win" : event.kind;
+    item.className = "feed-item k-" + kind + (isNew ? " is-new" : "");
+
+    var icon = document.createElement("div");
+    var spec = FEED_ICONS[event.kind] || ["·", "info"];
+    icon.className = "icon " + spec[1];
+    icon.textContent = spec[0];
+    item.appendChild(icon);
+
+    var body = document.createElement("div");
+    var msg = document.createElement("div");
+    msg.className = "msg";
+    // Messages carry token symbols from the market - always as text.
+    msg.textContent = event.message;
+    body.appendChild(msg);
+
+    var meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = new Date(event.ts * 1000).toLocaleTimeString() +
+                       (event.detail ? "  ·  " + event.detail : "");
+    body.appendChild(meta);
+    item.appendChild(body);
+    return item;
+  }
+
+  function loadEvents() {
+    var query = "/api/events?limit=150" +
+                (live.lastEventId ? "&since_id=" + live.lastEventId : "");
+    return getJSON(query).then(function (data) {
+      var feed = $("feed");
+      var events = data.events || [];
+
+      if (!live.lastEventId) {
+        feed.innerHTML = "";
+        if (!events.length) {
+          feed.innerHTML = '<div class="empty">Nothing yet. Start the bot and its actions appear here.</div>';
+        }
+        events.forEach(function (e) {
+          if (live.seenIds[e.id]) return;
+          live.seenIds[e.id] = true;
+          feed.insertBefore(feedRow(e, false), feed.firstChild);
+        });
+      } else {
+        events.forEach(function (e) {
+          if (live.seenIds[e.id]) return;
+          live.seenIds[e.id] = true;
+          var placeholder = feed.querySelector(".empty");
+          if (placeholder) { placeholder.remove(); }
+          feed.insertBefore(feedRow(e, true), feed.firstChild);
+        });
+        while (feed.childElementCount > 200) { feed.removeChild(feed.lastChild); }
+      }
+      if (data.last_id) { live.lastEventId = data.last_id; }
+    });
+  }
+
+  function refreshLive() {
+    if (live.tab !== "live") { return Promise.resolve(); }
+    return Promise.all([loadCandles(), loadEvents()]).catch(function (err) {
+      $("chart-source").textContent = String(err && err.message ? err.message : err);
+    });
+  }
+
   /* ---------------------------------------------------------------- shell */
   function showBanner(message, isError) {
     $("banner-slot").innerHTML =
@@ -545,6 +1102,25 @@
     });
   }
 
+  $("tab-live").addEventListener("click", function () { switchTab("live"); });
+  $("tab-overview").addEventListener("click", function () { switchTab("overview"); });
+
+  Array.prototype.forEach.call(document.querySelectorAll("#tf-group .tf"), function (button) {
+    button.addEventListener("click", function () {
+      live.timeframe = button.getAttribute("data-tf");
+      Array.prototype.forEach.call(document.querySelectorAll("#tf-group .tf"), function (other) {
+        other.setAttribute("aria-pressed", String(other === button));
+      });
+      loadCandles();
+    });
+  });
+
+  $("scale-toggle").addEventListener("click", function () {
+    var current = this.getAttribute("aria-pressed") === "true";
+    live.logScale = !current;
+    renderCandles();
+  });
+
   $("load-scan").addEventListener("click", function () {
     var button = this;
     button.disabled = true;
@@ -569,6 +1145,7 @@
     root.setAttribute("data-theme", dark ? "light" : "dark");
     try { localStorage.setItem("memebot-theme", dark ? "light" : "dark"); } catch (e) {}
     renderChart(chartState.points);
+    renderCandles();
   });
   try {
     var saved = localStorage.getItem("memebot-theme");
@@ -578,12 +1155,31 @@
   var resizeTimer;
   window.addEventListener("resize", function () {
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(function () { renderChart(chartState.points); }, 120);
+    resizeTimer = setTimeout(function () {
+      renderChart(chartState.points);
+      renderCandles();
+    }, 120);
   });
 
   bindChartHover();
+  bindCandleHover();
+
+  try {
+    var savedTab = localStorage.getItem("memebot-tab");
+    if (savedTab === "overview") { switchTab("overview"); }
+  } catch (e) {}
+
   refresh();
+  refreshLive();
   setInterval(refresh, 20000);
+  // The feed is the thing you watch while it trades, so it polls faster than
+  // the rest of the page.
+  setInterval(function () {
+    if (live.tab === "live") { loadEvents().catch(function () {}); }
+  }, 4000);
+  setInterval(function () {
+    if (live.tab === "live") { loadCandles().catch(function () {}); }
+  }, 15000);
 })();
 </script>
 </body>

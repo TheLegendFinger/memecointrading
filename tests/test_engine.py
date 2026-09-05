@@ -236,3 +236,60 @@ def test_equity_curve_is_recorded_each_cycle(config, hot_pair):
     engine.run(max_cycles=2, sleep=lambda _s: None)
     assert len(engine.storage.equity_curve()) >= 1
     assert engine.storage.peak_equity() > 0
+
+
+# ---- the live view's data --------------------------------------------------
+def test_a_cycle_records_the_heartbeat_the_dashboard_reads(config, hot_pair):
+    engine, _ = build_engine(config, [hot_pair])
+    engine.run_cycle()
+
+    assert engine.storage.get_state("last_cycle_at") > 0
+    assert engine.storage.get_state("cycles_run") == 1
+    engine.run_cycle()
+    assert engine.storage.get_state("cycles_run") == 2
+
+
+def test_trades_appear_in_the_activity_feed(config, hot_pair):
+    config.risk.take_profit_pct = 0.20
+    engine, market = build_engine(config, [hot_pair])
+    engine.run_cycle()
+    market.set_price(hot_pair.base.address, hot_pair.price_usd * 2)
+    engine.run_cycle()
+
+    kinds = [e["kind"] for e in engine.storage.list_events(limit=50)]
+    assert "buy" in kinds and "sell" in kinds
+
+    sell = next(e for e in engine.storage.list_events(limit=50) if e["kind"] == "sell")
+    assert "BEST" in sell["message"]
+    assert "take profit" in sell["detail"]
+    assert sell["level"] == "win"
+
+
+def test_a_failed_order_is_reported_in_the_feed(config, hot_pair):
+    config.execution.paper_failure_rate = 1.0
+    engine, _ = build_engine(config, [hot_pair])
+    engine.run_cycle()
+
+    errors = [e for e in engine.storage.list_events(limit=50) if e["kind"] == "error"]
+    assert errors and errors[0]["level"] == "error"
+
+
+def test_quiet_cycles_do_not_flood_the_feed(config):
+    """A feed of 'nothing happened' is not worth reading."""
+    dud = make_pair("DUD", chg_m5=-4.0, chg_h1=-15.0, vol_h1=45_000, vol_h24=980_000,
+                    buys_m5=10, sells_m5=90, buys_h1=460, sells_h1=540)
+    engine, _ = build_engine(config, [dud])
+    for _ in range(12):
+        engine.run_cycle()
+
+    cycle_events = [e for e in engine.storage.list_events(limit=100) if e["kind"] == "cycle"]
+    assert 0 < len(cycle_events) <= 3, "quiet cycles should be an occasional heartbeat"
+
+
+def test_prices_are_sampled_for_the_chart(config, hot_pair):
+    engine, _ = build_engine(config, [hot_pair])
+    engine.run_cycle()
+
+    samples = engine.storage.price_samples(hot_pair.base.address)
+    assert samples, "the chart is built from these"
+    assert samples[0]["price"] > 0

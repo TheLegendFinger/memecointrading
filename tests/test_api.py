@@ -8,6 +8,7 @@ account.
 
 import json
 import random
+import time
 
 import pytest
 
@@ -46,6 +47,14 @@ def state_db(tmp_path, monkeypatch):
     engine.run_cycle()
     engine.storage.close()
     return db
+
+
+@pytest.fixture(autouse=True)
+def no_external_candles(monkeypatch):
+    """The candle endpoint must never reach the network during tests."""
+    from memebot.data.candles import GeckoTerminalClient
+
+    monkeypatch.setattr(GeckoTerminalClient, "ohlcv", lambda self, *a, **k: [])
 
 
 @pytest.fixture
@@ -201,3 +210,116 @@ def test_health_endpoint_reports_without_a_database(tmp_path, monkeypatch):
     assert status == 200
     assert body["ok"] is False
     assert body["database"] == "not configured"
+
+
+# ---- the live view's endpoints -------------------------------------------------
+def test_events_endpoint_returns_the_feed_newest_first(state_db):
+    status, body = call("events")
+    assert status == 200
+    assert body["count"] >= 1
+    assert body["incremental"] is False
+    kinds = [e["kind"] for e in body["events"]]
+    assert "buy" in kinds or "cycle" in kinds
+    assert body["last_id"] > 0
+
+
+def test_events_endpoint_supports_incremental_polling(state_db):
+    _status, first = call("events")
+    last_id = first["last_id"]
+
+    _status, empty = call("events", f"/api/events?since_id={last_id}")
+    assert empty["incremental"] is True
+    assert empty["events"] == [], "nothing new should mean nothing returned"
+    assert empty["last_id"] == last_id
+
+    store = Storage(state_db)
+    try:
+        store.record_event("buy", "Bought LATER", symbol="LATER")
+    finally:
+        store.close()
+
+    _status, more = call("events", f"/api/events?since_id={last_id}")
+    assert [e["message"] for e in more["events"]] == ["Bought LATER"]
+    assert more["last_id"] > last_id
+
+
+def test_events_are_ordered_oldest_first_when_incremental(state_db):
+    store = Storage(state_db)
+    try:
+        base = store.list_events(limit=1)[0]["id"]
+        for i in range(3):
+            store.record_event("cycle", f"event {i}")
+    finally:
+        store.close()
+
+    _status, body = call("events", f"/api/events?since_id={base}")
+    ids = [e["id"] for e in body["events"]]
+    assert ids == sorted(ids)
+
+
+def test_candles_endpoint_defaults_to_the_open_position(state_db):
+    status, body = call("candles")
+    assert status == 200
+    assert body["symbol"] == "BEST"
+    assert body["timeframe"] == "5m"
+    assert body["position"] is not None
+    assert any(t["open"] for t in body["tokens"])
+
+
+def test_candles_include_this_bots_fills_as_markers(state_db):
+    _status, body = call("candles")
+    assert body["markers"], "the entries are the point of the chart"
+    marker = body["markers"][0]
+    assert marker["side"] in ("buy", "sell")
+    assert marker["price"] > 0
+    assert "reason" in marker
+
+
+def test_candles_fall_back_to_the_bots_own_samples(state_db):
+    """With no external OHLC source, the chart is still drawn."""
+    _status, body = call("candles")
+    assert body["source"] == "samples"
+    assert body["candles"], "a running bot always has some price history"
+    for candle in body["candles"]:
+        assert candle["low"] <= candle["open"] <= candle["high"]
+        assert candle["low"] <= candle["close"] <= candle["high"]
+
+
+def test_candles_widen_the_bucket_when_samples_are_sparse(state_db):
+    """One sample per bucket would draw flat dashes, not candles."""
+    store = Storage(state_db)
+    try:
+        rows = store.list_trades(limit=1)
+        address = rows[0]["token_address"]
+        store.execute("DELETE FROM price_samples")
+        base = time.time() - 60 * 600
+        for i in range(60):
+            store.record_price_sample(address, 1.0 + (i % 7) * 0.1, ts=base + i * 600)
+        store._commit()
+    finally:
+        store.close()
+
+    _status, body = call("candles", "/api/candles?timeframe=5m&address=" + address)
+    assert body["effective_timeframe"] != "5m", "a 10-minute poll cannot fill 5m candles"
+    bodies = [c for c in body["candles"] if c["open"] != c["close"]]
+    assert bodies, "widened buckets must produce candles with actual bodies"
+
+
+def test_candles_handle_a_token_with_no_history(state_db):
+    _status, body = call("candles", "/api/candles?address=mint-never-traded")
+    assert body["candles"] == []
+    assert body["markers"] == []
+    assert body["position"] is None
+
+
+def test_an_unknown_timeframe_falls_back_rather_than_erroring(state_db):
+    _status, body = call("candles", "/api/candles?timeframe=banana")
+    assert body["timeframe"] == "5m"
+
+
+def test_candles_with_no_trades_at_all_are_empty_not_an_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEMEBOT_STATE_DB", str(tmp_path / "fresh.sqlite3"))
+    monkeypatch.delenv("VERCEL", raising=False)
+    status, body = call("candles")
+    assert status == 200
+    assert body["candles"] == [] and body["tokens"] == []

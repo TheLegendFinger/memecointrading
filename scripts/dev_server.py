@@ -30,6 +30,8 @@ ROUTES = {
     "/api/trades": "trades",
     "/api/equity": "equity",
     "/api/scan": "scan",
+    "/api/events": "events",
+    "/api/candles": "candles",
     "/api/cycle": "cycle",
     "/api/health": "health",
 }

@@ -54,7 +54,7 @@ MENU: List[Item] = [
     Item("4", "Portfolio", "equity, open positions, win rate", "status", "LOOK"),
     Item("5", "Trade history", "recent fills with fees and P&L", "trades", "LOOK"),
     Item("6", "Scan the market", "what the bot sees right now", "scan", "LOOK"),
-    Item("7", "Dashboard", "the web view, in your browser", "dashboard", "LOOK"),
+    Item("7", "Dashboard", "live candles, entries and exits", "dashboard", "LOOK"),
 
     Item("8", "Wallet", "address, balance, or create a burner", "wallet", "SETUP"),
     Item("9", "Health check", "are the market feeds reachable?", "doctor", "SETUP"),
@@ -215,6 +215,8 @@ class Menu:
         self.output("")
         self.output(paint(f"  Running in {config.mode} mode. "
                           "Ctrl+C stops it and returns to the menu.", GREY))
+        self.output(paint("  Watch it trade: menu option 7 opens the live chart "
+                          "and action feed.", GREY))
         self.output("")
         try:
             engine.run()

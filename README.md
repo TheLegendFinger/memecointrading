@@ -42,7 +42,7 @@ opens a menu — everything is a number:
     4  Portfolio             equity, open positions, win rate
     5  Trade history         recent fills with fees and P&L
     6  Scan the market       what the bot sees right now
-    7  Dashboard             the web view, in your browser
+    7  Dashboard             live candles, entries and exits
 
    SETUP
     8  Wallet                address, balance, or create a burner
@@ -220,12 +220,14 @@ curl -X POST "https://your-app.vercel.app/api/cycle?key=YOUR_CRON_SECRET"
 
 | Route | What it does |
 | --- | --- |
-| `/` | The dashboard: equity chart, open positions, trade log, live market scan. |
+| `/` | The dashboard. **Live** tab: candlesticks with this bot's entries and exits, and a feed of what it is doing. **Overview** tab: equity curve, positions, trade log. |
 | `/api/status` | Portfolio summary as JSON. |
 | `/api/positions` | Open positions. |
 | `/api/trades?limit=50` | Trade history. |
 | `/api/equity?limit=300` | Equity curve points. |
 | `/api/scan?limit=25` | Live scored candidates — read-only, never trades. |
+| `/api/candles?address=…` | OHLC candles plus this bot's fills as markers. |
+| `/api/events?since_id=…` | The action feed, incrementally. |
 | `/api/health` | Connectivity and configuration diagnostics. |
 | `/api/cycle` | **Protected.** Runs one trading cycle. |
 
@@ -253,6 +255,24 @@ Global flags: `--config`, `--mode {paper,live}`, `--db`, `--log-level`,
 `python scripts/dev_server.py` serves the dashboard locally, and
 `python scripts/demo_session.py` runs a full session against a synthetic market
 with no network at all — useful for seeing the machinery work end to end.
+
+## Watching it trade
+
+Menu option **7** (or `python scripts/dev_server.py`) opens the dashboard. Its
+**Live** tab is built for watching a running bot:
+
+* **Left — the chart.** Candlesticks for whichever token it is holding, with a
+  green triangle wherever it bought, a red one wherever it sold, and a dashed
+  line at your average entry. Hovering gives OHLC and any fills in that candle.
+  Underneath, the fills on that token with the reason for each.
+* **Right — what it is doing.** Every buy, sell, failed order and halt as it
+  happens, with the reason attached. It appends live rather than redrawing.
+
+Candles come from GeckoTerminal when the pool is indexed there, and otherwise
+are built from the bot's own price observations — the chart says which, and
+never claims a timeframe it did not draw. The price axis switches to log when
+the range is wide enough to need it (memecoins routinely fall 20x, which makes
+a linear axis useless), and the `log` button overrides that either way.
 
 ## How a cycle works
 

@@ -91,6 +91,20 @@ class TradingEngine:
         self._stop = False
         self.cycles = 0
 
+    # ---- activity feed ---------------------------------------------------------
+    def emit(self, kind: str, message: str, symbol: str = "", address: str = "",
+             level: str = "info", detail: str = "") -> None:
+        """Record one line for the live view's action feed.
+
+        Never let the feed break trading: a storage hiccup here is logged and
+        swallowed rather than aborting a cycle mid-order.
+        """
+        try:
+            self.storage.record_event(kind, message, symbol=symbol, address=address,
+                                      level=level, detail=detail)
+        except Exception as exc:  # noqa: BLE001 - the feed is cosmetic, trading is not
+            log.debug("Could not record event: %s", exc)
+
     # ---- lifecycle -------------------------------------------------------------
     def install_signal_handlers(self) -> None:
         def handler(signum, _frame):  # pragma: no cover - signal path
@@ -158,6 +172,12 @@ class TradingEngine:
                 continue
             snapshots[position.token.address] = pair
             self.portfolio.mark(position.token.address, pair.price_usd, pair.liquidity_usd)
+            # Every observation is a chartable point, so the live view has a
+            # price history even where no external OHLC source is reachable.
+            try:
+                self.storage.record_price_sample(position.token.address, pair.price_usd)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("Could not record a price sample: %s", exc)
         return snapshots
 
     def _close_position(self, position: Position, reason: str, report: CycleReport) -> None:
@@ -172,18 +192,31 @@ class TradingEngine:
         )
         if self.config.dry_run:
             log.info("[dry-run] would SELL %s - %s", position.token, reason)
+            self.emit("dry_run", f"Would sell {position.token.symbol}",
+                      symbol=position.token.symbol, address=position.token.address, detail=reason)
             report.note_skip("dry_run")
             return
 
         fill = self.executor.execute(order)
         if not fill.ok:
             log.warning("SELL %s failed: %s", position.token, fill.error)
+            self.emit("error", f"Sell {position.token.symbol} failed", level="error",
+                      symbol=position.token.symbol, address=position.token.address,
+                      detail=fill.error)
             report.errors.append(f"sell {position.token.symbol}: {fill.error}")
             return
 
         realized = self.portfolio.apply_fill(fill)
         self.risk.record_close(realized)
         report.closed.append(fill)
+        self.emit(
+            "sell",
+            f"Sold {position.token.symbol} for ${fill.usd_amount - fill.fee_usd:,.2f} "
+            f"({realized:+,.2f})",
+            symbol=position.token.symbol, address=position.token.address,
+            level="win" if realized > 0 else "loss",
+            detail=reason,
+        )
         log.info(
             "SOLD %s %.4f @ %.8g -> $%.2f | pnl %+.2f | %s | %s",
             position.token.symbol or position.token.address[:6],
@@ -224,17 +257,30 @@ class TradingEngine:
         )
         if self.config.dry_run:
             log.info("[dry-run] would BUY %s for $%.2f - %s", signal_obj.token, size_usd, signal_obj.reason)
+            self.emit("dry_run", f"Would buy {signal_obj.token.symbol} for ${size_usd:,.2f}",
+                      symbol=signal_obj.token.symbol, address=signal_obj.token.address,
+                      detail=signal_obj.reason)
             report.note_skip("dry_run")
             return
 
         fill = self.executor.execute(order)
         if not fill.ok:
             log.warning("BUY %s failed: %s", signal_obj.token, fill.error)
+            self.emit("error", f"Buy {signal_obj.token.symbol} failed", level="error",
+                      symbol=signal_obj.token.symbol, address=signal_obj.token.address,
+                      detail=fill.error)
             report.errors.append(f"buy {signal_obj.token.symbol}: {fill.error}")
             return
 
         self.portfolio.apply_fill(fill)
         report.opened.append(fill)
+        self.emit(
+            "buy",
+            f"Bought {signal_obj.token.symbol} for ${fill.usd_amount:,.2f} @ {fill.price:.8g}",
+            symbol=signal_obj.token.symbol, address=signal_obj.token.address,
+            detail=f"score {signal_obj.score:.2f} | slip {fill.slippage_bps:.0f}bps | "
+                   f"fee ${fill.fee_usd:.2f}",
+        )
         log.info(
             "BOUGHT %s %.4f @ %.8g for $%.2f (fee $%.2f, slip %.0fbps) | %s | %s",
             signal_obj.token.symbol or signal_obj.token.address[:6],
@@ -262,6 +308,11 @@ class TradingEngine:
             return
 
         report.scanned = len(candidates)
+        for candidate in candidates[:40]:
+            try:
+                self.storage.record_price_sample(candidate.base.address, candidate.price_usd)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("Could not record a price sample: %s", exc)
         filtered = self.filter.apply(candidates)
         report.passed_filters = len(filtered.passed)
         log.debug("Scanned %d pairs, %d passed (%s)", report.scanned, report.passed_filters, filtered.summary())
@@ -298,10 +349,39 @@ class TradingEngine:
         if halted:
             report.halted_reason = reason
             log.warning("Trading halted: %s", reason)
+            self.emit("halt", "Trading halted", level="error", detail=reason)
         else:
             self.scan_for_entries(report)
 
         self.portfolio.snapshot_equity()
+        # The dashboard's "last cycle" heartbeat. Written here rather than only
+        # by the serverless endpoint, so a bot running on your own machine keeps
+        # it current too.
+        try:
+            self.storage.set_state("last_cycle_at", time.time())
+            self.storage.set_state("cycles_run", int(self.storage.get_state("cycles_run", 0) or 0) + 1)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Could not update the heartbeat: %s", exc)
+
+        # A feed of "nothing happened" is not worth reading. Cycles are recorded
+        # when something actually occurred, plus an occasional heartbeat so you
+        # can see it is still alive.
+        eventful = bool(report.opened or report.closed or report.errors or report.halted_reason)
+        if eventful or self.cycles % 10 == 1:
+            self.emit(
+                "cycle",
+                f"Cycle {self.cycles}: scanned {report.scanned}, {report.passed_filters} passed, "
+                f"{report.signals} signal(s)",
+                detail=f"equity ${self.portfolio.equity:,.2f} | "
+                       f"{len(self.portfolio.positions)} open | "
+                       f"{len(report.opened)} bought, {len(report.closed)} sold",
+            )
+        if self.cycles % 20 == 0:
+            try:
+                self.storage.prune_events()
+                self.storage.prune_price_samples(time.time() - 7 * 86400)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("Could not prune the feed: %s", exc)
         log.info(
             "cycle %d | equity $%.2f (cash $%.2f, %d open) | scanned %d -> %d passed -> %d signals | "
             "+%d/-%d trades | return %+.2f%%",
@@ -321,6 +401,9 @@ class TradingEngine:
             "Starting memebot | mode=%s | %s | equity $%.2f | strategy=%s",
             self.config.mode, self.executor.describe(), self.portfolio.equity, self.strategy.name,
         )
+        self.emit("start", f"Started in {self.config.mode} mode",
+                  level="warn" if self.config.mode == Mode.LIVE.value else "info",
+                  detail=f"equity ${self.portfolio.equity:,.2f} | {self.executor.describe()}")
         if self.config.mode == Mode.LIVE.value:
             log.warning("LIVE MODE - real funds are at risk on every order")
 
@@ -342,6 +425,8 @@ class TradingEngine:
             "Stopped after %d cycles | equity $%.2f | realized pnl $%.2f",
             self.cycles, self.portfolio.equity, self.storage.trade_stats()["realized_pnl_usd"],
         )
+        self.emit("stop", f"Stopped after {self.cycles} cycle(s)",
+                  detail=f"equity ${self.portfolio.equity:,.2f}")
 
     def liquidate_all(self, reason: str = "manual liquidation") -> CycleReport:
         """Close every open position at the current market price."""

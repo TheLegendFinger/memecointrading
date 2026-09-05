@@ -98,7 +98,8 @@ def test_filters_rejecting_everything_is_a_warning_not_a_failure(config, armed):
     assert report.healthy, "a too-strict filter is a config problem, not an outage"
 
 
-def test_min_score_too_high_is_reported_with_the_best_score(config, armed):
+def test_min_score_too_high_names_the_number_that_would_have_worked(config, armed):
+    """"Lower min_score" without a number sent people hunting blindly."""
     dex, jup = healthy_clients()
     config.filters.min_liquidity_usd = 1_000
     config.filters.min_volume_h24_usd = 1_000
@@ -107,7 +108,16 @@ def test_min_score_too_high_is_reported_with_the_best_score(config, armed):
     report = run_checks(config, deep=False, data=dex, jupiter=jup)
     pipeline = next(c for c in report.checks if c.name == "candidate pipeline")
     assert pipeline.status == WARN
-    assert "lower min_score" in pipeline.detail
+    assert "best score was" in pipeline.detail
+    assert "would have taken it" in pipeline.detail
+
+
+def test_a_narrow_scan_is_called_out(config, armed):
+    """68 coins a cycle is not a market, it is a rounding error."""
+    dex, jup = healthy_clients()
+    report = run_checks(config, deep=False, data=dex, jupiter=jup)
+    pipeline = next(c for c in report.checks if c.name == "candidate pipeline")
+    assert "widen data.search_terms" in pipeline.detail
 
 
 def test_a_setup_that_is_ready_but_not_armed_passes(config, monkeypatch):

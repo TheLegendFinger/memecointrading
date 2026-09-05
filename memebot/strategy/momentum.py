@@ -7,6 +7,16 @@ liquid enough to exit.
 
 Every component is normalised to 0..1 and combined with configurable weights,
 so the final score is comparable across candidates and easy to threshold.
+
+Roughly what the composite means, so `strategy.min_score` can be chosen with
+something other than a dart (see tests/test_momentum_calibration.py, which
+pins these bands):
+
+    0.90+  vertical - already up 40%+ on the hour, volume 4x its own average
+    0.65   clearly running: +3-4% on 5m, +18% on 1h, 3x volume, 2:1 buys
+    0.45   decent: moving up, hotter than usual, more buyers than sellers
+    0.30   warming up
+    <0.10  flat, drifting, or falling
 """
 
 from __future__ import annotations
@@ -36,15 +46,19 @@ def _ramp(value: float, low: float, high: float) -> float:
 class MomentumStrategy(Strategy):
     name = "momentum"
 
-    # Tuning constants for the normalisation ramps (percent / ratios).
+    # Normalisation ramps. Each ceiling is "as good as this component measures",
+    # so it has to be a number a real candidate actually reaches - set it to a
+    # once-a-week moonshot and every ordinary pair scores near zero, which is
+    # what made min_score unreachable in earlier versions. The anchors below
+    # describe a coin that is clearly running, not a lottery winner.
     M5_FLOOR_PCT = 0.5
-    M5_CEIL_PCT = 12.0
+    M5_CEIL_PCT = 6.0    # +6% in five minutes is already a hard move
     H1_FLOOR_PCT = 2.0
-    H1_CEIL_PCT = 60.0
-    SURGE_FLOOR = 1.0   # 1h volume equal to the 24h hourly average
-    SURGE_CEIL = 6.0    # running 6x hot
-    BUY_RATIO_FLOOR = 0.50
-    BUY_RATIO_CEIL = 0.72
+    H1_CEIL_PCT = 30.0   # +30% on the hour
+    SURGE_FLOOR = 1.0    # 1h volume equal to the 24h hourly average
+    SURGE_CEIL = 3.5     # running 3.5x hot
+    BUY_RATIO_FLOOR = 0.48
+    BUY_RATIO_CEIL = 0.66  # two buys for every sell is lopsided already
     LIQ_FLOOR_USD = 25_000.0
     LIQ_CEIL_USD = 750_000.0
 

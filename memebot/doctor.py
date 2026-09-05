@@ -242,10 +242,21 @@ def _run_checks(
         )
         if result.rejections:
             detail += f" | top rejections: {result.summary()}"
+        if len(candidates) < 100:
+            detail += (
+                f" | only {len(candidates)} coins seen - widen data.search_terms"
+            )
         if not result.passed:
             return WARN, detail + " | filters are rejecting everything - loosen them"
         if not tradable:
-            return WARN, detail + f" | best score was {scores[0]:.2f}; lower min_score to trade"
+            # Naming the number matters: "lower min_score" without one sent
+            # people hunting for a value that would have worked.
+            suggestion = max(0.10, round(scores[0] - 0.05, 2))
+            return WARN, detail + (
+                f" | best score was {scores[0]:.2f} - nothing is running hard enough "
+                f"right now. min_score {suggestion:.2f} would have taken it; leaving it "
+                "where it is and waiting is the other answer"
+            )
         return OK, detail
 
     report.run("candidate pipeline", check_pipeline)

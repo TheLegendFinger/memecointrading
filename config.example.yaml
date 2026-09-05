@@ -16,22 +16,28 @@ log_level: INFO
 
 data:
   chain: solana
-  search_terms: ["SOL", "WSOL", "pump", "bonk"]
+  # Each term is one request returning ~30 pairs, de-duplicated by token
+  # afterwards - more terms is a genuinely wider net, not the same coins twice.
+  # Four terms only sees ~70 coins a cycle, which is not enough for anything to
+  # clear the filters.
+  search_terms: ["SOL", "WSOL", "USDC", "pump", "bonk", "wif", "cat", "dog", "inu", "pepe",
+                 "moon", "elon", "trump", "ai", "meme", "coin", "baby", "gold", "chad", "wojak"]
   use_boosted_feed: true
   use_token_profiles: true
-  max_candidates: 120
+  max_candidates: 400            # pairs scored per cycle
+  feed_limit: 120                # how deep to read each feed before batching
 
 filters:
   # Stricter than paper. With real money, being able to EXIT matters more
   # than finding more candidates.
-  min_liquidity_usd: 50000       # you must be able to sell what you buy
-  max_liquidity_usd: 5000000
-  min_volume_h1_usd: 40000
-  min_volume_h24_usd: 250000
+  min_liquidity_usd: 30000       # you must be able to sell what you buy
+  max_liquidity_usd: 5000000     # above this it is not a memecoin trade
+  min_volume_h1_usd: 25000
+  min_volume_h24_usd: 150000
   min_age_minutes: 30            # skip the first, most manipulated minutes
   max_age_minutes: 20160
   max_fdv_usd: 30000000
-  min_trades_h1: 100
+  min_trades_h1: 60
   min_buy_ratio_h1: 0.48
   min_liquidity_to_fdv: 0.02     # rug guard, tighter than paper
   max_price_change_h1_pct: 200   # do not buy the top of a vertical move
@@ -41,7 +47,13 @@ filters:
 
 strategy:
   name: momentum
-  min_score: 0.62                # pickier than paper's 0.55
+  # The main dial. Roughly what the score means:
+  #   0.90+  vertical - already up 40%+ on the hour, volume 4x its average
+  #   0.65   clearly running: +3-4% on 5m, +18% on 1h, 3x volume, 2:1 buys
+  #   0.45   decent: moving up, hotter than usual, more buyers than sellers
+  #   0.30   warming up
+  #   <0.10  flat, drifting or falling
+  min_score: 0.55
   max_new_positions_per_cycle: 1 # one entry per cycle, no piling in
 
 risk:

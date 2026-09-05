@@ -37,7 +37,7 @@ time, then opens a menu — everything is a number:
 ```
   ╋╋╋╋╋╋╋╋╋╋┏┓╋╋┏┓
   ┏━━┳━┳━━┳━┫┗┳━┫┗┓
-  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.1.3
+  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.2.0
   ┗┻┻┻━┻┻┻┻━┻━┻━┻━┛   LIVE - real money
 
    $1,043.18 · $812.40 cash · 2 open · +4.32%
@@ -356,7 +356,7 @@ Worth tuning first:
 
 | Setting | Default | Why you would change it |
 | --- | --- | --- |
-| `strategy.min_score` | `0.62` | The main dial. Raise for fewer, higher-conviction entries; lower to trade more. |
+| `strategy.min_score` | `0.55` | The main dial. `0.65` is a coin clearly running (+3-4% on 5m, +18% on 1h, 3x its own volume, 2:1 buys); `0.45` is decent; `0.30` is warming up; under `0.10` is flat or falling. |
 | `data.search_terms` | 20 terms | How wide the net is. Each term is one request returning ~30 pairs. |
 | `data.max_candidates` | `400` | How many pairs a cycle scores. |
 | `risk.position_size_pct` | `0.08` | Fraction of equity per position. |
@@ -365,8 +365,11 @@ Worth tuning first:
 | `filters.min_age_minutes` | `20` | Lower to catch launches earlier, at much higher risk. |
 | `execution.slippage_bps` | `150` | Too low and orders revert; too high and you get sandwiched. |
 
-If `doctor` reports plenty of pairs but nothing tradable, loosen
-`strategy.min_score` first, then `filters.min_volume_h1_usd`.
+If `doctor` reports plenty of pairs but nothing tradable it names the score
+that would have worked, so you can decide between lowering `strategy.min_score`
+and waiting for a better market. If it says only a few dozen coins were seen,
+that is `data.search_terms` being too short - each term is one request worth
+about 30 pairs, and four terms is not a market.
 
 ## Development
 

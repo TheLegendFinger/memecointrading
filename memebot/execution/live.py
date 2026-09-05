@@ -37,6 +37,11 @@ class LiveExecutionError(RuntimeError):
     pass
 
 
+def is_armed() -> bool:
+    """Whether this process has acknowledged that orders spend real money."""
+    return os.environ.get(CONFIRM_ENV, "") == CONFIRM_VALUE
+
+
 def _load_keypair():
     """Load a solders Keypair from the environment. Never logs the secret."""
     try:
@@ -172,9 +177,9 @@ class LiveExecutor(Executor):
         self.rpc = rpc or SolanaRpc(self.cfg.rpc_url, timeout=config.data.request_timeout)
 
     # ---- arming / safety -------------------------------------------------------
-    def preflight(self) -> Optional[str]:
+    def preflight(self, require_arming: bool = True) -> Optional[str]:
         """Return a human-readable reason the executor cannot trade, or None."""
-        if os.environ.get(CONFIRM_ENV, "") != CONFIRM_VALUE:
+        if require_arming and not is_armed():
             return (
                 f"live trading is not armed - set {CONFIRM_ENV}={CONFIRM_VALUE} "
                 "in the environment to confirm you understand real funds are at risk"
@@ -256,7 +261,7 @@ class LiveExecutor(Executor):
             "address": self.wallet_address,
             "rpc_url": self.cfg.rpc_url,
             "quote_mint": self.cfg.quote_mint,
-            "armed": os.environ.get(CONFIRM_ENV, "") == CONFIRM_VALUE,
+            "armed": is_armed(),
         }
         summary["sol_balance"] = self.sol_balance()
         summary["sol_price_usd"] = self.jupiter.price(WSOL_MINT)

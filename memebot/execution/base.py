@@ -29,8 +29,14 @@ class Executor(ABC):
     def describe(self) -> str:
         return self.mode
 
-    def preflight(self) -> Optional[str]:
-        """Return an error string if the executor is not ready to trade."""
+    def preflight(self, require_arming: bool = True) -> Optional[str]:
+        """Return an error string if the executor is not ready to trade.
+
+        `require_arming` is what the health check turns off: arming is a
+        deliberate act at the moment you start trading, not something wrong
+        with the setup, and treating it as a failure hides the checks that
+        do say whether trading would work.
+        """
         return None
 
     def available_cash_usd(self) -> Optional[float]:

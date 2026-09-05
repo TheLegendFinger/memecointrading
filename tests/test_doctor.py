@@ -33,7 +33,8 @@ def healthy_clients():
 def armed(monkeypatch):
     """An armed, working executor - so checks under test are the ones failing."""
     monkeypatch.setenv("LIVE_TRADING_CONFIRM", "I_UNDERSTAND_THE_RISK")
-    monkeypatch.setattr("memebot.execution.live.LiveExecutor.preflight", lambda self: None)
+    monkeypatch.setattr("memebot.execution.live.LiveExecutor.preflight",
+                        lambda self, require_arming=True: None)
     monkeypatch.setattr("memebot.execution.live.LiveExecutor.describe",
                         lambda self: "live via Jupiter (test)")
 
@@ -44,7 +45,8 @@ def status_of(report, name):
 
 def test_everything_reachable_reports_healthy(config, monkeypatch):
     monkeypatch.setenv("LIVE_TRADING_CONFIRM", "I_UNDERSTAND_THE_RISK")
-    monkeypatch.setattr("memebot.execution.live.LiveExecutor.preflight", lambda self: None)
+    monkeypatch.setattr("memebot.execution.live.LiveExecutor.preflight",
+                        lambda self, require_arming=True: None)
     monkeypatch.setattr("memebot.execution.live.LiveExecutor.describe",
                         lambda self: "live via Jupiter (test)")
     dex, jup = healthy_clients()
@@ -108,15 +110,40 @@ def test_min_score_too_high_is_reported_with_the_best_score(config, armed):
     assert "lower min_score" in pipeline.detail
 
 
-def test_execution_without_the_interlock_fails(config, monkeypatch):
-    """There is no practice mode, so this check always applies."""
+def test_a_setup_that_is_ready_but_not_armed_passes(config, monkeypatch):
+    """Arming is an act, not a fault: the menu does it when you press start."""
+    monkeypatch.delenv("LIVE_TRADING_CONFIRM", raising=False)
+    monkeypatch.setattr("memebot.execution.live.LiveExecutor.preflight",
+                        lambda self, require_arming=True: None)
+    monkeypatch.setattr("memebot.execution.live.LiveExecutor.describe",
+                        lambda self: "live via Jupiter (test)")
+    dex, jup = healthy_clients()
+
+    report = run_checks(config, deep=False, data=dex, jupiter=jup)
+    execution = next(c for c in report.checks if c.name == "execution")
+    assert execution.status == OK
+    assert "arms itself when you start trading" in execution.detail
+
+
+def test_the_health_check_reports_what_is_actually_wrong(config, monkeypatch):
+    """Unarmed used to mask this: no wallet is the thing to say."""
     monkeypatch.delenv("LIVE_TRADING_CONFIRM", raising=False)
     dex, jup = healthy_clients()
 
     report = run_checks(config, deep=False, data=dex, jupiter=jup)
     execution = next(c for c in report.checks if c.name == "execution")
     assert execution.status == FAIL
-    assert "not armed" in execution.detail
+    assert "wallet" in execution.detail.lower()
+    assert "not armed" not in execution.detail
+
+
+def test_the_engine_still_refuses_to_trade_unarmed(config, monkeypatch):
+    """Relaxing the health check must not relax the interlock itself."""
+    monkeypatch.delenv("LIVE_TRADING_CONFIRM", raising=False)
+    from memebot.execution.live import LiveExecutor
+
+    executor = LiveExecutor.__new__(LiveExecutor)
+    assert "not armed" in LiveExecutor.preflight(executor)
 
 
 def test_state_store_is_probed(config, armed):

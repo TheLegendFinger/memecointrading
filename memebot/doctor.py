@@ -252,13 +252,24 @@ def _run_checks(
 
     # ---- trading readiness -------------------------------------------------
     def check_execution():
+        """Is this setup able to trade - wallet, RPC, funds?
+
+        Arming is deliberately not part of it. It is a per-run acknowledgement
+        that the menu and the scripts make for you the moment you start
+        trading, so failing the health check over it says nothing about the
+        setup and hides the three answers that do.
+        """
         from .execution import build_executor
+        from .execution.live import is_armed
 
         executor = build_executor(config, data=data, jupiter=jupiter)
-        blocked = executor.preflight()
+        blocked = executor.preflight(require_arming=False)
         if blocked:
             return FAIL, blocked
-        return OK, executor.describe()
+        detail = executor.describe()
+        if not is_armed():
+            detail += " | arms itself when you start trading"
+        return OK, detail
 
     report.run("execution", check_execution)
     return report

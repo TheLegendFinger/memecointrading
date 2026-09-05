@@ -37,7 +37,7 @@ time, then opens a menu — everything is a number:
 ```
   ╋╋╋╋╋╋╋╋╋╋┏┓╋╋┏┓
   ┏━━┳━┳━━┳━┫┗┳━┫┗┓
-  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.1.2
+  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.1.3
   ┗┻┻┻━┻┻┻┻━┻━┻━┻━┛   LIVE - real money
 
    $1,043.18 · $812.40 cash · 2 open · +4.32%
@@ -93,7 +93,13 @@ what is or isn't working:
   [PASS] jupiter price            180ms  SOL = $198.44
   [PASS] jupiter routing          301ms  0.1 SOL routes to 19.81 USDC via Whirlpool (impact 0.004%)
   [PASS] candidate pipeline      2914ms  118 scanned -> 24 passed filters -> 3 above min_score 0.55
+  [PASS] execution                 96ms  live via Jupiter | wallet 7xKX...9Fda | 0.42 SOL | arms itself when you start trading
 ```
+
+The `execution` line answers three questions: is there a wallet, is the RPC up,
+and is there enough SOL to pay for a swap. It does not care whether live
+trading is *armed* — that acknowledgement is made when you start trading, and
+the menu and scripts make it for you.
 
 If the pipeline line says *"filters are rejecting everything"* or *"best score
 was 0.41; lower min_score to trade"*, that is a tuning problem, not a bug — see

@@ -14,8 +14,6 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import time
-import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional
@@ -54,10 +52,9 @@ MENU: List[Item] = [
     Item("4", "Portfolio", "equity, open positions, win rate", "status", "LOOK"),
     Item("5", "Trade history", "recent fills with fees and P&L", "trades", "LOOK"),
     Item("6", "Scan the market", "what the bot sees right now", "scan", "LOOK"),
-    Item("7", "Dashboard", "live candles, entries and exits", "dashboard", "LOOK"),
 
-    Item("8", "Wallet", "address, balance, or create a burner", "wallet", "SETUP"),
-    Item("9", "Health check", "are the market feeds reachable?", "doctor", "SETUP"),
+    Item("7", "Wallet", "address, balance, or create a burner", "wallet", "SETUP"),
+    Item("8", "Health check", "are the market feeds reachable?", "doctor", "SETUP"),
 
     Item("0", "Quit", "", "quit", ""),
 ]
@@ -147,7 +144,7 @@ class Menu:
             title = paint(f"{item.title:<22}", item.style or WHITE)
             desc = paint(item.description, GREY)
             self.output(f"{key}{title}{desc}")
-            if item.key in ("3", "7", "9"):
+            if item.key in ("3", "6", "8"):
                 self.output("")
 
         if self.message:
@@ -184,7 +181,7 @@ class Menu:
                 return 0
             item = next((i for i in MENU if i.key == choice), None)
             if item is None:
-                self.notify(f"'{choice}' is not on the menu - pick a number from 0 to 9.", YELLOW)
+                self.notify(f"'{choice}' is not on the menu - pick a number from 0 to 8.", YELLOW)
                 continue
             try:
                 self.dispatch(item.action)
@@ -201,23 +198,28 @@ class Menu:
 
     # ---- actions --------------------------------------------------------------
     def _run_engine(self, live: bool) -> None:
+        from .console_view import ConsoleView
         from .engine import TradingEngine
         from .logging_utils import setup_logging
 
         config = self.load(live=live)
-        setup_logging(config.log_level, config.log_file)
-        engine = TradingEngine(config)
+        view = ConsoleView(output=self.output)
+
+        # With the live display on, log lines would scribble over the frame, so
+        # they go to the file only. Without a terminal (piped output, CI) it is
+        # the other way round: plain logs, no frames.
+        setup_logging(config.log_level, config.log_file, console=not view.active)
+
+        engine = TradingEngine(config, on_cycle=view)
         blocked = engine.preflight()
         if blocked:
             self.notify(blocked, RED)
             return
 
         self.output("")
-        self.output(paint(f"  Running in {config.mode} mode. "
-                          "Ctrl+C stops it and returns to the menu.", GREY))
-        self.output(paint("  Watch it trade: menu option 7 opens the live chart "
-                          "and action feed.", GREY))
-        self.output("")
+        self.output(paint(f"  Starting in {config.mode} mode. First scan takes a few "
+                          "seconds...", GREY))
+        self.output(paint("  Ctrl+C stops it and returns to the menu.", GREY))
         try:
             engine.run()
         finally:
@@ -366,34 +368,6 @@ class Menu:
             cmd_wallet(Namespace(new=True, save=True), config)
         self.output("")
         self.pause()
-
-    def do_dashboard(self) -> None:
-        config = self.load()
-        script = Path(__file__).resolve().parent.parent / "scripts" / "dev_server.py"
-        if not script.exists():
-            self.notify("scripts/dev_server.py is missing from this folder.", RED)
-            return
-
-        process = subprocess.Popen(
-            [sys.executable, str(script), "--port", "8000", "--db", config.state_db],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        try:
-            time.sleep(1.5)
-            if process.poll() is not None:
-                self.notify("The dashboard server exited immediately - is port 8000 in use?", RED)
-                return
-            webbrowser.open("http://localhost:8000")
-            self.output("")
-            self.output(paint("  Dashboard running at http://localhost:8000", GREEN))
-            self.ask("Press Enter to stop it and go back")
-        finally:
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:  # pragma: no cover - stubborn child
-                process.kill()
-        self.notify("Dashboard stopped.", GREY)
 
     def do_quit(self) -> None:  # pragma: no cover - handled in run()
         raise SystemExit(0)

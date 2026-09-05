@@ -27,11 +27,11 @@ data:
   jupiter_rate_limit_per_minute: 60   # Jupiter's keyless tier is stricter
   cache_ttl_seconds: 5
   # Jupiter's keyless endpoints. With a paid key (JUPITER_API_KEY in the env)
-  # switch these to https://api.jup.ag/swap/v1 and https://api.jup.ag/price/v2.
+  # switch these to https://api.jup.ag/swap/v1 and https://api.jup.ag/price/v3.
   # If Jupiter moves an endpoint, `memebot doctor` will tell you, and this is
   # where you point it at the new one.
   jupiter_quote_url: https://lite-api.jup.ag/swap/v1
-  jupiter_price_url: https://lite-api.jup.ag/price/v2
+  jupiter_price_url: https://lite-api.jup.ag/price/v3
 
 # Hard safety gates. A pair must clear all of these before it is even scored.
 filters:

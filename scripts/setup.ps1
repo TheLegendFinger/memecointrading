@@ -86,8 +86,8 @@ if (-not (Test-Path -LiteralPath '.env')) {
 Write-Host ''
 Write-Host '  Setup complete.' -ForegroundColor Green
 Write-Host ''
+Write-Host '  Start here (menu)      :  powershell -ExecutionPolicy Bypass -File scripts\start.ps1'
 Write-Host '  Check the market feeds :  powershell -ExecutionPolicy Bypass -File scripts\doctor.ps1'
 Write-Host '  Paper trade            :  powershell -ExecutionPolicy Bypass -File scripts\run.ps1'
-Write-Host '  Dashboard              :  powershell -ExecutionPolicy Bypass -File scripts\dashboard.ps1'
 Write-Host '  Trade for real         :  powershell -ExecutionPolicy Bypass -File scripts\live.ps1'
 Write-Host ''

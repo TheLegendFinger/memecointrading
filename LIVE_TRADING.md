@@ -58,14 +58,8 @@ powershell -ExecutionPolicy Bypass -File scripts\doctor.ps1   # is the market da
 powershell -ExecutionPolicy Bypass -File scripts\run.ps1      # paper trading; Ctrl+C to stop
 ```
 
-In a second PowerShell window:
-
-```powershell
-cd ~\memecointrading
-powershell -ExecutionPolicy Bypass -File scripts\dashboard.ps1   # opens http://localhost:8000
-```
-
-Let it run. If it never trades, the market is quiet or your settings are
+The terminal shows what it holds, what it is watching and everything it does,
+redrawn after every scan. Let it run. If it never trades, the market is quiet or your settings are
 strict — `doctor.ps1` will tell you which, and the
 [README](README.md#configuration) says what to loosen.
 
@@ -131,11 +125,8 @@ cd ~\memecointrading
 .\.venv\Scripts\python.exe -m memebot trades --config config.live.yaml
 ```
 
-Or the dashboard:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\dev_server.py --db data\memebot-live.sqlite3
-```
+The running window already shows all of this live; these are for checking on it
+from a second window without interrupting the bot.
 
 ## 8. Stopping
 

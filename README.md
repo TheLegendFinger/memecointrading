@@ -42,11 +42,10 @@ opens a menu — everything is a number:
     4  Portfolio             equity, open positions, win rate
     5  Trade history         recent fills with fees and P&L
     6  Scan the market       what the bot sees right now
-    7  Dashboard             live candles, entries and exits
 
    SETUP
-    8  Wallet                address, balance, or create a burner
-    9  Health check          are the market feeds reachable?
+    7  Wallet                address, balance, or create a burner
+    8  Health check          are the market feeds reachable?
 
     0  Quit
 
@@ -112,8 +111,8 @@ a cycle and where the state lives.
 
 ### D — Local only (no cloud, start here)
 
-Nothing to configure. `scripts\run.ps1` keeps state in `data/memebot.sqlite3`,
-and `scripts\dashboard.ps1` serves the dashboard from that same file.
+Nothing to configure. `scripts\run.ps1` (or menu option 1) keeps state in
+`data/memebot.sqlite3` and shows everything in the terminal as it trades.
 
 ### A — Your PC trades, Vercel shows the dashboard
 
@@ -240,7 +239,7 @@ curl -X POST "https://your-app.vercel.app/api/cycle?key=YOUR_CRON_SECRET"
 | *(none)* | Opens the numbered menu. Same as `menu`. |
 | `doctor` | Check every API, the database, and the candidate funnel. Start here. |
 | `wallet` | Create or inspect the live trading wallet: address, balance, position size. |
-| `run` | The trading loop. `--cycles N` to stop after N passes, `--interval S` for the cadence. |
+| `run` | The trading loop, with the live display. `--cycles N` to stop after N passes, `--interval S` for the cadence, `--plain` for log lines instead. |
 | `once` | A single cycle, then exit. Good for cron. |
 | `scan` | Score the live market and print the table — never trades. |
 | `status` | Portfolio summary (`--json` for scripts). |
@@ -258,21 +257,47 @@ with no network at all — useful for seeing the machinery work end to end.
 
 ## Watching it trade
 
-Menu option **7** (or `python scripts/dev_server.py`) opens the dashboard. Its
-**Live** tab is built for watching a running bot:
+The terminal is the display. Start it (menu **1** or **2**) and it redraws after
+every scan — no browser, no second window:
 
-* **Left — the chart.** Candlesticks for whichever token it is holding, with a
-  green triangle wherever it bought, a red one wherever it sold, and a dashed
-  line at your average entry. Hovering gives OHLC and any fills in that candle.
-  Underneath, the fills on that token with the reason for each.
-* **Right — what it is doing.** Every buy, sell, failed order and halt as it
-  happens, with the reason attached. It appends live rather than redrawing.
+```
+╭────────────────────────────────────────────────────────────────────────╮
+│ memebot                                     PAPER · cycle 14 · 16:43:07│
+╰────────────────────────────────────────────────────────────────────────╯
 
-Candles come from GeckoTerminal when the pool is indexed there, and otherwise
-are built from the bot's own price observations — the chart says which, and
-never claims a timeframe it did not draw. The price axis switches to log when
-the range is wide enough to need it (memecoins routinely fall 20x, which makes
-a linear axis useless), and the `log` button overrides that either way.
+  $945.27 · $786.19 cash · -5.47% · 2 open · 2W/5L
+
+  HOLDING
+   MOODENG          0.0767  ▲   3.1%    $78.19  avg 0.0738     4m  ▁▁▂▃▃▃▄▇██
+   POPCAT           0.0271  ▲   9.2%    $80.88  avg 0.0246    11m  ▁▁▄▃▃▅▅▇▇██
+
+  WATCHING            score      5m       1h   liquidity
+   MEW                  0.49     5.1%    16.9%    $454,601
+   BONK                 0.21     0.5%     1.3%    $120,075
+
+  ACTIVITY
+   16:43  BUY   Bought MOODENG for $75.22 @ 0.073807399
+           score 0.70 | slip 50bps | fee $0.59
+   16:43  SELL  Sold BONK for $121.36 (+49.46)
+           take profit +72.0%
+
+  next scan in ~30s  ·  Ctrl+C to stop
+```
+
+Each holding shows its live price, P&L, average entry, how long it has been
+held, and a sparkline of its recent prices. **WATCHING** is what scored highest
+this scan without being bought. **ACTIVITY** is every buy, sell, failed order
+and halt, with the reason attached.
+
+Log lines go to the log file while this is up, so nothing scribbles over the
+frame. Pipe the output somewhere (a file, CI) and it switches back to plain log
+lines automatically; `--plain` forces that. On a console that cannot render box
+characters or colour, it falls back to ASCII rather than failing.
+
+There is also a **web dashboard** — candlestick charts with entry and exit
+markers, and the same activity feed — but it is for the
+[Vercel deployment](#deploying-to-vercel), so you can check the bot from your
+phone. Locally, `python scripts/dev_server.py` serves it if you want it.
 
 ## How a cycle works
 
@@ -406,6 +431,7 @@ memebot/
   doctor.py        dependency and configuration diagnostics
   wallet.py        burner wallet creation and inspection
   menu.py          the numbered menu
+  console_view.py  the live trading display in the terminal
   ui.py            terminal colour and box drawing, with ASCII fallbacks
   cli.py           command line interface
   data/            dexscreener.py (discovery/prices), jupiter.py (routing)

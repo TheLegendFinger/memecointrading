@@ -56,15 +56,20 @@ def _table(rows: List[List[str]], headers: List[str]) -> str:
     return f"{line}\n{sep}\n{body}"
 
 
-def _build_engine(config: BotConfig) -> TradingEngine:
-    return TradingEngine(config)
+def _build_engine(config: BotConfig, on_cycle=None) -> TradingEngine:
+    return TradingEngine(config, on_cycle=on_cycle)
 
 
 # --------------------------------------------------------------------------------
 # commands
 # --------------------------------------------------------------------------------
 def cmd_run(args: argparse.Namespace, config: BotConfig) -> int:
-    engine = _build_engine(config)
+    from .console_view import ConsoleView
+    from .logging_utils import setup_logging
+
+    view = ConsoleView(force=False if args.plain else None)
+    setup_logging(config.log_level, config.log_file, console=not view.active)
+    engine = _build_engine(config, on_cycle=view if view.active else None)
 
     if config.mode == Mode.LIVE.value and not args.yes:
         wallet = getattr(engine.executor, "wallet_address", "<unknown>")
@@ -400,6 +405,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--cycles", type=int, default=None, help="stop after N cycles")
     run.add_argument("--interval", type=float, default=None, help="seconds between cycles")
     run.add_argument("-y", "--yes", action="store_true", help="skip the live-trading confirmation")
+    run.add_argument("--plain", action="store_true",
+                     help="plain log lines instead of the live display")
     run.set_defaults(func=cmd_run)
 
     once = sub.add_parser("once", help="run a single cycle and exit")

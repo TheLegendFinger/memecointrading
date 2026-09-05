@@ -25,6 +25,34 @@ log = logging.getLogger(__name__)
 
 TOKEN_METADATA_URL = "https://tokens.jup.ag/token"
 
+# Jupiter moves these. Price v2 was retired in favour of v3, and the paid host
+# differs from the keyless one, so rather than hard-coding a single URL and
+# failing when it 404s, the client walks this list and remembers what answered.
+# A configured URL is always tried first.
+PRICE_ENDPOINTS = [
+    "https://lite-api.jup.ag/price/v3",
+    "https://api.jup.ag/price/v3",
+    "https://lite-api.jup.ag/price/v2",
+    "https://api.jup.ag/price/v2",
+]
+
+QUOTE_ENDPOINTS = [
+    "https://lite-api.jup.ag/swap/v1",
+    "https://api.jup.ag/swap/v1",
+    "https://quote-api.jup.ag/v6",
+]
+
+
+def _candidates(configured: str, known: List[str]) -> List[str]:
+    """The configured endpoint first, then the known ones, without duplicates."""
+    out, seen = [], set()
+    for url in [configured] + list(known):
+        cleaned = (url or "").rstrip("/")
+        if cleaned and cleaned not in seen:
+            seen.add(cleaned)
+            out.append(cleaned)
+    return out
+
 
 @dataclass
 class JupiterQuote:
@@ -78,7 +106,7 @@ class JupiterClient:
     def __init__(
         self,
         quote_url: str = "https://lite-api.jup.ag/swap/v1",
-        price_url: str = "https://lite-api.jup.ag/price/v2",
+        price_url: str = "https://lite-api.jup.ag/price/v3",
         timeout: float = 12.0,
         max_retries: int = 3,
         backoff_seconds: float = 1.0,
@@ -87,7 +115,9 @@ class JupiterClient:
         http: Optional[HttpClient] = None,
     ) -> None:
         self.quote_url = quote_url.rstrip("/")
-        self.price_url = price_url
+        self.price_url = price_url.rstrip("/")
+        self._price_candidates = _candidates(price_url, PRICE_ENDPOINTS)
+        self._quote_candidates = _candidates(quote_url, QUOTE_ENDPOINTS)
         # A paid Jupiter key raises the rate limit; the keyless tier works fine
         # for a handful of orders a minute.
         self.api_key = api_key if api_key is not None else os.environ.get("JUPITER_API_KEY", "").strip()
@@ -129,6 +159,35 @@ class JupiterClient:
         return float(amount) / (10 ** self.decimals(mint))
 
     # ---- prices ----------------------------------------------------------------
+    def _fetch_prices(self, chunk: List[str]) -> Dict[str, float]:
+        """Ask each candidate endpoint until one answers with usable prices.
+
+        A 404 means that version is gone, so move on; anything else is a real
+        outage and is reported rather than silently retried round the houses.
+        """
+        last_error: Optional[HttpError] = None
+        for index, url in enumerate(self._price_candidates):
+            try:
+                data = self.http.get(url, params={"ids": ",".join(chunk)})
+            except HttpError as exc:
+                last_error = exc
+                if exc.status in (404, 400, 410):
+                    log.debug("Jupiter price endpoint %s is gone (%s)", url, exc.status)
+                    continue
+                break
+            prices = _parse_price_payload(data)
+            if prices:
+                if url != self.price_url:
+                    log.info("Jupiter price endpoint moved: using %s", url)
+                    # Stick with what works for the rest of this run.
+                    self.price_url = url
+                    self._price_candidates = _candidates(url, PRICE_ENDPOINTS)
+                return prices
+            last_error = HttpError(f"{url} answered with no usable prices")
+        if last_error:
+            log.warning("Jupiter price request failed: %s", last_error)
+        return {}
+
     def prices(self, mints: Iterable[str]) -> Dict[str, float]:
         """USD price per mint. Missing mints are simply absent from the result."""
         ids = [m for m in mints if m]
@@ -136,14 +195,7 @@ class JupiterClient:
             return {}
         out: Dict[str, float] = {}
         for i in range(0, len(ids), 50):
-            chunk = ids[i : i + 50]
-            try:
-                data = self.http.get(self.price_url, params={"ids": ",".join(chunk)})
-            except HttpError as exc:
-                log.warning("Jupiter price request failed: %s", exc)
-                continue
-            for mint, price in _parse_price_payload(data).items():
-                out[mint] = price
+            out.update(self._fetch_prices(ids[i : i + 50]))
         return out
 
     def price(self, mint: str) -> float:
@@ -171,11 +223,22 @@ class JupiterClient:
         }
         if max_accounts:
             params["maxAccounts"] = int(max_accounts)
-        try:
-            data = self.http.get(f"{self.quote_url}/quote", params=params)
-        except HttpError as exc:
-            log.warning("Jupiter quote failed (%s -> %s): %s", input_mint[:6], output_mint[:6], exc)
-            return None
+        data = None
+        for url in self._quote_candidates:
+            try:
+                data = self.http.get(f"{url}/quote", params=params)
+            except HttpError as exc:
+                if exc.status in (404, 410) and url != self._quote_candidates[-1]:
+                    log.debug("Jupiter quote endpoint %s is gone; trying the next", url)
+                    continue
+                log.warning("Jupiter quote failed (%s -> %s): %s",
+                            input_mint[:6], output_mint[:6], exc)
+                return None
+            if url != self.quote_url:
+                log.info("Jupiter swap endpoint moved: using %s", url)
+                self.quote_url = url
+                self._quote_candidates = _candidates(url, QUOTE_ENDPOINTS)
+            break
         if not isinstance(data, dict) or not data.get("outAmount"):
             return None
 

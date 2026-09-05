@@ -98,6 +98,8 @@ class Glyphs:
         self.br = "╯" if fancy else "+"
         self.dot = "·" if fancy else "*"
         self.arrow = "›" if fancy else ">"
+        self.up = "▲" if fancy else "^"
+        self.down = "▼" if fancy else "v"
 
 
 def clear_screen() -> None:

@@ -17,7 +17,7 @@ import logging
 import signal
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from .config import BotConfig
 from .data.dexscreener import DexScreenerClient
@@ -45,6 +45,8 @@ class CycleReport:
     errors: List[str] = field(default_factory=list)
     skipped: Dict[str, int] = field(default_factory=dict)
     halted_reason: str = ""
+    # The best-scoring candidates this cycle, for the live display: (score, pair).
+    top_candidates: List[tuple] = field(default_factory=list)
 
     def note_skip(self, reason: str) -> None:
         self.skipped[reason] = self.skipped.get(reason, 0) + 1
@@ -59,6 +61,7 @@ class TradingEngine:
         executor: Optional[Executor] = None,
         portfolio: Optional[Portfolio] = None,
         jupiter: Optional[JupiterClient] = None,
+        on_cycle: Optional[Callable[["TradingEngine", CycleReport], None]] = None,
     ) -> None:
         self.config = config
         self.storage = storage or open_storage(config.state_db)
@@ -90,6 +93,9 @@ class TradingEngine:
 
         self._stop = False
         self.cycles = 0
+        # Called after every cycle. The console live view uses this to redraw;
+        # a failure in it must never stop the bot trading.
+        self.on_cycle = on_cycle
 
     # ---- activity feed ---------------------------------------------------------
     def emit(self, kind: str, message: str, symbol: str = "", address: str = "",
@@ -319,6 +325,10 @@ class TradingEngine:
 
         signals = self.strategy.generate_entries(filtered.passed)
         report.signals = len(signals)
+        report.top_candidates = sorted(
+            ((self.strategy.score(pair), pair) for pair in filtered.passed),
+            key=lambda item: item[0], reverse=True,
+        )[:5]
 
         opened = 0
         for signal_obj in signals:
@@ -389,6 +399,12 @@ class TradingEngine:
             report.scanned, report.passed_filters, report.signals,
             len(report.opened), len(report.closed), self.portfolio.total_return_pct * 100.0,
         )
+
+        if self.on_cycle is not None:
+            try:
+                self.on_cycle(self, report)
+            except Exception as exc:  # noqa: BLE001 - the display is not the job
+                log.debug("Cycle observer failed: %s", exc)
         return report
 
     # ---- main loop -------------------------------------------------------------

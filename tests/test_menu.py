@@ -133,7 +133,7 @@ def test_every_menu_item_has_a_handler():
     ("4", ["status"]),
     ("5", ["trades", "--limit", "25"]),
     ("6", ["scan", "--limit", "20"]),
-    ("9", ["doctor"]),
+    ("8", ["doctor"]),
 ])
 def test_read_only_actions_call_the_cli(monkeypatch, key, expected):
     calls = []
@@ -270,57 +270,62 @@ def test_liquidate_says_so_when_there_is_nothing_to_close(tmp_path, monkeypatch)
     assert "No open positions" in driver.text
 
 
-# ---- dashboard (manages a child process) ---------------------------------------
-def test_dashboard_starts_the_server_opens_a_browser_and_cleans_up(monkeypatch):
-    opened = []
-    terminated = []
+# ---- the live terminal display -------------------------------------------------
+def test_the_menu_has_no_browser_dashboard():
+    """Trading is watched in the terminal now, not in a browser tab."""
+    assert all(item.action != "dashboard" for item in MENU)
+    assert not hasattr(Menu, "do_dashboard")
 
-    class FakeProcess:
-        def __init__(self, *args, **kwargs):
-            self.args = args[0] if args else []
 
-        def poll(self):
-            return None  # still running
+def test_running_attaches_the_live_display(monkeypatch, tmp_path):
+    """The engine must be given the view, or nothing would redraw."""
+    monkeypatch.setenv("MEMEBOT_STATE_DB", str(tmp_path / "view.sqlite3"))
+    captured = {}
 
-        def terminate(self):
-            terminated.append(True)
+    class StubEngine:
+        def __init__(self, config, on_cycle=None):
+            captured["on_cycle"] = on_cycle
+            self.storage = type("S", (), {"close": lambda self: None})()
 
-        def wait(self, timeout=None):
-            return 0
+        def preflight(self):
+            return None
 
-    monkeypatch.setattr("memebot.menu.subprocess.Popen", FakeProcess)
-    monkeypatch.setattr("memebot.menu.webbrowser.open", lambda url: opened.append(url))
-    monkeypatch.setattr("memebot.menu.time.sleep", lambda seconds: None)
+        def run(self):
+            captured["ran"] = True
 
-    menu, driver = menu_for("7", "", "0")
+    monkeypatch.setattr("memebot.engine.TradingEngine", StubEngine)
+
+    menu, _driver = menu_for("1", "0")
     menu.run()
 
-    assert opened == ["http://localhost:8000"]
-    assert terminated == [True], "the server must be stopped when you go back"
-    assert "Dashboard stopped." in driver.text
+    assert captured.get("ran") is True
+    from memebot.console_view import ConsoleView
+
+    assert isinstance(captured["on_cycle"], ConsoleView)
 
 
-def test_dashboard_reports_a_server_that_dies_immediately(monkeypatch):
-    class DeadProcess:
-        def __init__(self, *args, **kwargs):
+def test_logging_goes_to_the_file_while_the_display_is_up(monkeypatch, tmp_path):
+    """Log lines would scribble over the frame the view redraws."""
+    monkeypatch.setenv("MEMEBOT_STATE_DB", str(tmp_path / "view.sqlite3"))
+    calls = {}
+
+    class StubEngine:
+        def __init__(self, config, on_cycle=None):
+            self.storage = type("S", (), {"close": lambda self: None})()
+
+        def preflight(self):
+            return None
+
+        def run(self):
             pass
 
-        def poll(self):
-            return 1  # exited already
+    monkeypatch.setattr("memebot.engine.TradingEngine", StubEngine)
+    monkeypatch.setattr("memebot.logging_utils.setup_logging",
+                        lambda level, log_file=None, console=True: calls.update(console=console))
 
-        def terminate(self):
-            pass
-
-        def wait(self, timeout=None):
-            return 1
-
-    monkeypatch.setattr("memebot.menu.subprocess.Popen", DeadProcess)
-    monkeypatch.setattr("memebot.menu.time.sleep", lambda seconds: None)
-    opened = []
-    monkeypatch.setattr("memebot.menu.webbrowser.open", lambda url: opened.append(url))
-
-    menu, driver = menu_for("7", "0")
+    menu, _driver = menu_for("1", "0")
     menu.run()
 
-    assert not opened, "no browser should open onto a dead server"
-    assert "port 8000 in use" in driver.text
+    # The test harness is not a terminal, so the view is inactive and ordinary
+    # logging stays on - which is exactly the piped-output behaviour.
+    assert calls["console"] is True

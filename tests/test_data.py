@@ -237,3 +237,94 @@ def test_rate_limiter_waits_once_the_budget_is_spent():
     limiter.acquire(sleep=fake_sleep)
     assert len(waits) == 1
     assert 0 < waits[0] <= 60.0
+
+
+# ---- endpoint drift ------------------------------------------------------------
+def test_price_v3_response_shape_is_read():
+    """v3 returns mints at the top level with usdPrice, unlike v2."""
+    http = FakeHttp({"/price/v3": {WSOL_MINT: {"usdPrice": 198.44, "decimals": 9}}})
+    client = JupiterClient(price_url="https://lite-api.jup.ag/price/v3", http=http)
+    assert client.price(WSOL_MINT) == pytest.approx(198.44)
+
+
+def test_a_retired_price_endpoint_falls_through_to_the_next():
+    """This is the failure the user hit: v2 answering 404 Route not found."""
+    calls = []
+
+    class Drifted(FakeHttp):
+        def _resolve(self, path, params):
+            calls.append(path)
+            if "/price/v2" in path:
+                raise HttpError("HTTP 404: Route not found", 404)
+            if "/price/v3" in path:
+                return {WSOL_MINT: {"usdPrice": 198.44}}
+            raise HttpError("no route", 404)
+
+    client = JupiterClient(price_url="https://lite-api.jup.ag/price/v2", http=Drifted())
+    assert client.price(WSOL_MINT) == pytest.approx(198.44)
+    assert any("/price/v2" in c for c in calls), "the configured endpoint is tried first"
+    assert any("/price/v3" in c for c in calls), "then it moves on"
+
+
+def test_a_working_endpoint_is_remembered_for_the_rest_of_the_run():
+    calls = []
+
+    class Drifted(FakeHttp):
+        def _resolve(self, path, params):
+            calls.append(path)
+            if "/price/v2" in path:
+                raise HttpError("HTTP 404: Route not found", 404)
+            return {WSOL_MINT: {"usdPrice": 1.0}}
+
+    client = JupiterClient(price_url="https://lite-api.jup.ag/price/v2", http=Drifted())
+    client.price(WSOL_MINT)
+    first_round = len(calls)
+    client.price(WSOL_MINT)
+    assert len(calls) - first_round == 1, "the dead endpoint must not be retried every time"
+    assert client.price_url.endswith("/price/v3")
+
+
+def test_a_real_outage_is_not_mistaken_for_endpoint_drift():
+    """A 500 or a timeout should be reported, not hidden behind a fallback walk."""
+    attempts = []
+
+    class Down(FakeHttp):
+        def _resolve(self, path, params):
+            attempts.append(path)
+            raise HttpError("HTTP 503: upstream down", 503)
+
+    client = JupiterClient(http=Down())
+    assert client.prices([WSOL_MINT]) == {}
+    assert len(attempts) == 1, "one failure is enough when the service is simply down"
+
+
+def test_a_retired_quote_endpoint_falls_through_too():
+    class Drifted(FakeHttp):
+        def _resolve(self, path, params):
+            if "/v6/quote" in path:
+                raise HttpError("HTTP 404: Route not found", 404)
+            return {
+                "inputMint": WSOL_MINT, "inAmount": "1000", "outputMint": USDC_MINT,
+                "outAmount": "2000", "otherAmountThreshold": "1900",
+                "priceImpactPct": "0.001", "slippageBps": 100, "routePlan": [],
+            }
+
+    client = JupiterClient(quote_url="https://quote-api.jup.ag/v6", http=Drifted())
+    quote = client.quote(WSOL_MINT, USDC_MINT, 1000, 100)
+    assert quote is not None and quote.out_amount == 2000
+    assert client.quote_url != "https://quote-api.jup.ag/v6"
+
+
+def test_the_configured_endpoint_is_always_tried_first():
+    from memebot.data.jupiter import PRICE_ENDPOINTS, _candidates
+
+    ordered = _candidates("https://my-own-proxy.example/price", PRICE_ENDPOINTS)
+    assert ordered[0] == "https://my-own-proxy.example/price"
+    assert len(ordered) == len(set(ordered)), "no duplicates"
+
+
+def test_no_duplicate_candidates_when_the_default_is_configured():
+    from memebot.data.jupiter import PRICE_ENDPOINTS, _candidates
+
+    ordered = _candidates(PRICE_ENDPOINTS[0], PRICE_ENDPOINTS)
+    assert ordered == PRICE_ENDPOINTS

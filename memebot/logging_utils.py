@@ -27,15 +27,25 @@ class _ColorFormatter(logging.Formatter):
         return text
 
 
-def setup_logging(level: str = "INFO", log_file: Optional[str] = None) -> None:
+def setup_logging(level: str = "INFO", log_file: Optional[str] = None,
+                  console: bool = True) -> None:
+    """Configure logging.
+
+    `console=False` sends everything to the file only, which is what the live
+    terminal display needs - log lines would otherwise scribble over the frame
+    it redraws.
+    """
     root = logging.getLogger()
     root.setLevel(getattr(logging, str(level).upper(), logging.INFO))
     for handler in list(root.handlers):
         root.removeHandler(handler)
 
-    console = logging.StreamHandler(sys.stderr)
-    console.setFormatter(_ColorFormatter("%(asctime)s %(levelname)-7s %(name)-22s %(message)s", "%H:%M:%S"))
-    root.addHandler(console)
+    if console:
+        stream = logging.StreamHandler(sys.stderr)
+        stream.setFormatter(
+            _ColorFormatter("%(asctime)s %(levelname)-7s %(name)-22s %(message)s", "%H:%M:%S")
+        )
+        root.addHandler(stream)
 
     if log_file:
         directory = os.path.dirname(log_file)
@@ -44,6 +54,13 @@ def setup_logging(level: str = "INFO", log_file: Optional[str] = None) -> None:
         rotating = RotatingFileHandler(log_file, maxBytes=5 * 1024 * 1024, backupCount=3)
         rotating.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(name)-22s %(message)s"))
         root.addHandler(rotating)
+
+    if not console and not log_file:
+        # Nothing would be recorded at all; keep warnings visible.
+        fallback = logging.StreamHandler(sys.stderr)
+        fallback.setLevel(logging.WARNING)
+        fallback.setFormatter(_ColorFormatter("%(levelname)-7s %(message)s"))
+        root.addHandler(fallback)
 
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("requests").setLevel(logging.WARNING)

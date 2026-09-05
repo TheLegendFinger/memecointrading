@@ -41,7 +41,7 @@ class DataConfig:
     # Jupiter's keyless tier. With a paid key (JUPITER_API_KEY in the env) point
     # these at https://api.jup.ag/swap/v1 and https://api.jup.ag/price/v2.
     jupiter_quote_url: str = "https://lite-api.jup.ag/swap/v1"
-    jupiter_price_url: str = "https://lite-api.jup.ag/price/v2"
+    jupiter_price_url: str = "https://lite-api.jup.ag/price/v3"
     # Jupiter's free tier is stricter than DexScreener's, so it gets its own budget.
     jupiter_rate_limit_per_minute: int = 60
 

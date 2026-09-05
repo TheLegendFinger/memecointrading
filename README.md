@@ -20,19 +20,43 @@ It ships with a web dashboard you can deploy to Vercel in a couple of minutes.
 ```powershell
 git clone https://github.com/TheLegendFinger/memecointrading.git
 cd memecointrading
-powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
+powershell -ExecutionPolicy Bypass -File scripts\start.ps1
 ```
 
-That creates a virtual environment, installs everything, and copies
-`config.example.yaml` to `config.yaml`. Then:
+That is the only command you need. It sets the project up the first time, then
+opens a menu — everything is a number:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\doctor.ps1      # are the feeds reachable?
-powershell -ExecutionPolicy Bypass -File scripts\run.ps1         # paper trade the real market
-powershell -ExecutionPolicy Bypass -File scripts\dashboard.ps1   # dashboard at localhost:8000
+```
+ ╭────────────────────────────────────────────────────────────────╮
+ │ memebot 1.0.0                                            PAPER │
+ ╰────────────────────────────────────────────────────────────────╯
+
+   $1,043.18 · $812.40 cash · 2 open · +4.32%
+
+   TRADE
+    1  Paper trade           practice on the real market, no real money
+    2  Live trade            REAL money on Solana
+    3  Close all positions   sell everything at market
+
+   LOOK
+    4  Portfolio             equity, open positions, win rate
+    5  Trade history         recent fills with fees and P&L
+    6  Scan the market       what the bot sees right now
+    7  Dashboard             the web view, in your browser
+
+   SETUP
+    8  Wallet                address, balance, or create a burner
+    9  Health check          are the market feeds reachable?
+
+    0  Quit
+
+   › Type a number:
 ```
 
-Run `run.ps1` in one terminal and `dashboard.ps1` in another to watch it work.
+`start.bat` in the project folder does the same thing if you would rather
+double-click than type. Every individual script still exists
+(`scripts\run.ps1`, `scripts\doctor.ps1`, ...) and the CLI is unchanged — the
+menu is a front door, not a replacement.
 
 <details>
 <summary>macOS / Linux</summary>
@@ -42,9 +66,9 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp config.example.yaml config.yaml
 
-python -m memebot doctor        # check the live feeds
+python -m memebot               # the same menu
+python -m memebot doctor        # or go straight to a command
 python -m memebot run --config config.yaml
-python scripts/dev_server.py    # dashboard at localhost:8000
 ```
 </details>
 
@@ -211,6 +235,7 @@ curl -X POST "https://your-app.vercel.app/api/cycle?key=YOUR_CRON_SECRET"
 
 | Command | What it does |
 | --- | --- |
+| *(none)* | Opens the numbered menu. Same as `menu`. |
 | `doctor` | Check every API, the database, and the candidate funnel. Start here. |
 | `wallet` | Create or inspect the live trading wallet: address, balance, position size. |
 | `run` | The trading loop. `--cycles N` to stop after N passes, `--interval S` for the cadence. |
@@ -336,7 +361,7 @@ If `doctor` reports plenty of pairs but nothing tradable, loosen
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest -q          # 205 tests, no network access required
+python -m pytest -q          # 248 tests, no network access required
 ```
 
 The suite fakes DexScreener, Jupiter, the Solana RPC and Postgres, so it runs
@@ -360,6 +385,8 @@ memebot/
   engine.py        the cycle
   doctor.py        dependency and configuration diagnostics
   wallet.py        burner wallet creation and inspection
+  menu.py          the numbered menu
+  ui.py            terminal colour and box drawing, with ASCII fallbacks
   cli.py           command line interface
   data/            dexscreener.py (discovery/prices), jupiter.py (routing)
   execution/       base.py (interface), paper.py (simulator), live.py (Jupiter)

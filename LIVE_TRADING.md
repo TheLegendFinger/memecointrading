@@ -32,16 +32,20 @@ git clone https://github.com/TheLegendFinger/memecointrading.git
 cd memecointrading
 ```
 
-## 2. Install
+## 2. Install and open the menu
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
+powershell -ExecutionPolicy Bypass -File scripts\start.ps1
 ```
 
-This creates a private Python environment inside the folder and installs
-everything. It takes a minute. `-ExecutionPolicy Bypass` is needed because
-Windows blocks unsigned scripts by default; it applies to this one command
-only.
+The first run sets everything up (a private Python environment inside the
+folder — it takes a minute), then opens the menu. `-ExecutionPolicy Bypass` is
+needed because Windows blocks unsigned scripts by default; it applies to this
+one command only.
+
+**From here you can do the whole thing with numbers**: `8` for the wallet, `9`
+to check the feeds, `1` to paper trade, `2` to go live. The steps below give the
+equivalent commands if you prefer typing them.
 
 ## 3. Paper trade first — for at least a day
 

@@ -144,6 +144,13 @@ def cmd_scan(args: argparse.Namespace, config: BotConfig) -> int:
     return 0
 
 
+def cmd_menu(args: argparse.Namespace, config: BotConfig) -> int:
+    """The numbered menu - everything reachable by typing a digit."""
+    from .menu import Menu
+
+    return Menu(config_path=args.config).run()
+
+
 def cmd_wallet(args: argparse.Namespace, config: BotConfig) -> int:
     """Create a wallet, or show the configured one and its balance."""
     from .wallet import (
@@ -384,7 +391,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true",
                         help="evaluate and log decisions without sending any order")
 
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command", required=False)
+
+    menu = sub.add_parser("menu", help="the numbered menu (default when run with no command)")
+    menu.set_defaults(func=cmd_menu)
 
     run = sub.add_parser("run", help="run the trading loop")
     run.add_argument("--cycles", type=int, default=None, help="stop after N cycles")
@@ -436,6 +446,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    # `python -m memebot` with no command opens the menu, so newcomers never
+    # have to know a single flag.
+    if args.command is None:
+        args.command = "menu"
+        args.func = cmd_menu
 
     overrides: Dict[str, Any] = {
         "mode": args.mode,

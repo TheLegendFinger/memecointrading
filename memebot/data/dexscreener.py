@@ -21,6 +21,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from ..http import HttpClient, HttpError
 from ..models import PairSnapshot, Token
+from .geckoterminal import GeckoTerminalClient, merge_addresses
 
 log = logging.getLogger(__name__)
 
@@ -101,9 +102,13 @@ class DexScreenerClient:
         rate_limit_per_minute: int = 120,
         cache_ttl_seconds: float = 5.0,
         http: Optional[HttpClient] = None,
+        gecko: Optional[GeckoTerminalClient] = None,
     ) -> None:
         self.chain = chain
         self.cache_ttl = cache_ttl_seconds
+        self._gecko = gecko
+        # What each feed contributed on the last discover(), for diagnostics.
+        self.last_sources: Dict[str, int] = {}
         self.http = http or HttpClient(
             base_url=base_url,
             timeout=timeout,
@@ -112,6 +117,16 @@ class DexScreenerClient:
             rate_limit_per_minute=rate_limit_per_minute,
         )
         self._cache: Dict[str, tuple] = {}
+
+    @property
+    def gecko(self) -> Optional[GeckoTerminalClient]:
+        """The pool feeds, if this client was given them.
+
+        Deliberately not built on demand: a client handed a transport - a test,
+        a probe - must not quietly reach a second API behind it. Production
+        builds it in memebot.data.build_dexscreener.
+        """
+        return self._gecko
 
     # ---- internals -------------------------------------------------------------
     def _cached(self, key: str) -> Optional[Any]:
@@ -243,43 +258,103 @@ class DexScreenerClient:
         use_token_profiles: bool = True,
         max_candidates: int = 400,
         feed_limit: int = 120,
+        use_trending_pools: bool = False,
+        use_top_pools: bool = False,
+        use_new_pools: bool = False,
+        max_per_symbol: int = 0,
     ) -> List[PairSnapshot]:
         """Build the candidate universe for one scan cycle.
 
-        Three funnels feed it: full-text search (broad - anything with volume
-        under a matching name), the boost leaderboards (what is being promoted
-        right now), and the newest token profiles (early names). Feed tokens are
-        resolved in batches of 30, so widening the net costs a handful of
-        requests rather than hundreds.
+        Two kinds of feed, and the difference matters:
 
-        Results are de-duplicated by base token, keeping the deepest pool, and
-        returned sorted by 1h volume - the busiest names first.
+        *By name* - DexScreener full-text search. Broad and cheap, but it finds
+        text, not trades: ask for a fashionable word and you get every coin
+        called that, which is how one family of copycats ends up filling a
+        whole scan.
+
+        *By activity* - the boost leaderboards (what is being promoted) and
+        GeckoTerminal's trending / busiest / newest pools (what is actually
+        being traded). These do not care what anything is called.
+
+        The pool feeds default to off here so this client never reaches a
+        second API unless it was asked to; the config turns them on.
+
+        Feed tokens are resolved through DexScreener in batches of 30, so every
+        candidate is priced by one source. Results are de-duplicated by base
+        token keeping the deepest pool, thinned so no ticker family can crowd
+        out the rest, and returned busiest-first by 1h volume.
         """
         by_token: Dict[str, PairSnapshot] = {}
+        counts: Dict[str, int] = {}
 
-        def add(snap: PairSnapshot) -> None:
+        def add(snap: PairSnapshot, source: str) -> None:
             existing = by_token.get(snap.base.address)
-            if existing is None or snap.liquidity_usd > existing.liquidity_usd:
-                by_token[snap.base.address] = snap
+            if existing is not None and existing.liquidity_usd >= snap.liquidity_usd:
+                return
+            snap.source = source if existing is None else existing.source
+            by_token[snap.base.address] = snap
 
         for term in search_terms:
             for snap in self.search(term):
-                add(snap)
+                add(snap, "search")
 
-        feed_addresses: List[str] = []
+        # Each feed is kept separate so one long list cannot crowd out the
+        # others when they are interleaved.
+        feeds: Dict[str, List[str]] = {}
         if use_boosted_feed:
-            feed_addresses.extend(self.boosted_tokens(limit=feed_limit))
+            feeds["boosts"] = self.boosted_tokens(limit=feed_limit)
         if use_token_profiles:
-            feed_addresses.extend(self.token_profiles(limit=feed_limit))
+            feeds["profiles"] = self.token_profiles(limit=feed_limit)
+        gecko = self.gecko
+        if gecko is None and (use_trending_pools or use_top_pools or use_new_pools):
+            log.debug("Pool feeds asked for but no GeckoTerminal client was given.")
+        elif gecko is not None:
+            if use_trending_pools:
+                feeds["trending"] = gecko.trending_tokens(limit=feed_limit)
+            if use_top_pools:
+                feeds["busiest"] = gecko.top_volume_tokens(limit=feed_limit)
+            if use_new_pools:
+                feeds["new"] = gecko.new_pool_tokens(limit=feed_limit)
 
-        unseen, seen = [], set()
-        for address in feed_addresses:
-            if address in by_token or address in seen:
-                continue
-            seen.add(address)
-            unseen.append(address)
+        origin: Dict[str, str] = {}
+        for name, addresses in feeds.items():
+            for address in addresses:
+                origin.setdefault(address, name)
+
+        unseen = [a for a in merge_addresses(*feeds.values()) if a not in by_token]
         for snap in self.pairs_for_tokens(unseen):
-            add(snap)
+            add(snap, origin.get(snap.base.address, "feed"))
 
         candidates = sorted(by_token.values(), key=lambda p: p.vol("h1"), reverse=True)
-        return candidates[:max_candidates]
+        if max_per_symbol > 0:
+            candidates = _thin_by_symbol(candidates, max_per_symbol)
+        candidates = candidates[:max_candidates]
+
+        for snap in candidates:
+            counts[snap.source] = counts.get(snap.source, 0) + 1
+        self.last_sources = counts
+        return candidates
+
+
+def symbol_family(pair: PairSnapshot) -> str:
+    """A coarse key for "the same coin, again".
+
+    Copycats do not pick unrelated names: STONK, STONKS, STONK2 and $STONK all
+    turn up at once when one of them catches. The first few letters of the
+    ticker group them without needing a list of what is currently fashionable.
+    """
+    root = "".join(ch for ch in pair.base.symbol.lower() if ch.isalnum())[:5]
+    return root or pair.base.address[:8].lower()
+
+
+def _thin_by_symbol(pairs: List[PairSnapshot], limit: int) -> List[PairSnapshot]:
+    """Keep at most `limit` per ticker family, busiest first."""
+    kept: List[PairSnapshot] = []
+    seen: Dict[str, int] = {}
+    for pair in pairs:
+        family = symbol_family(pair)
+        if seen.get(family, 0) >= limit:
+            continue
+        seen[family] = seen.get(family, 0) + 1
+        kept.append(pair)
+    return kept

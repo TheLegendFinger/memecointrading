@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 
 from . import __version__
 from .config import BotConfig, load_config
+from .data import discover_candidates
 from .engine import TradingEngine
 from .logging_utils import setup_logging
 from .storage import Storage, open_storage
@@ -118,19 +119,19 @@ def cmd_once(args: argparse.Namespace, config: BotConfig) -> int:
 def cmd_scan(args: argparse.Namespace, config: BotConfig) -> int:
     """Show what the bot sees right now, without trading."""
     engine = _build_engine(config)
-    candidates = engine.data.discover(
-        config.data.search_terms,
-        use_boosted_feed=config.data.use_boosted_feed,
-        use_token_profiles=config.data.use_token_profiles,
-        max_candidates=config.data.max_candidates,
-        feed_limit=config.data.feed_limit,
-    )
+    candidates = discover_candidates(engine.data, config.data)
     result = engine.filter.apply(candidates)
     scored = sorted(
         ((engine.strategy.score(p), p) for p in result.passed), key=lambda t: t[0], reverse=True
     )
 
     print(f"\nScanned {len(candidates)} pairs; {len(result.passed)} passed filters.")
+    sources = getattr(engine.data, "last_sources", {}) or {}
+    if sources:
+        print("Found by: " + ", ".join(
+            f"{name} {count}" for name, count in
+            sorted(sources.items(), key=lambda kv: -kv[1])
+        ))
     if result.rejections:
         print(f"Rejections: {result.summary()}")
 
@@ -146,9 +147,11 @@ def cmd_scan(args: argparse.Namespace, config: BotConfig) -> int:
             f"${pair.vol('h1'):,.0f}",
             f"{pair.buy_ratio('h1') * 100:.0f}%",
             f"{pair.age_minutes / 60:.1f}h" if pair.age_minutes < 1e9 else "?",
+            pair.source or "-",
         ])
     print()
-    print(_table(rows, ["SYMBOL", "SCORE", "PRICE", "5M", "1H", "LIQ", "VOL1H", "BUY%", "AGE"]))
+    print(_table(rows, ["SYMBOL", "SCORE", "PRICE", "5M", "1H", "LIQ", "VOL1H", "BUY%",
+                        "AGE", "FOUND BY"]))
     tradable = [s for s, _ in scored if s >= config.strategy.min_score]
     print(f"\n{len(tradable)} candidate(s) at or above the {config.strategy.min_score:.2f} entry threshold.")
     return 0

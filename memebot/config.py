@@ -53,7 +53,19 @@ class DataConfig:
     cache_ttl_seconds: float = 5.0
     # Also sample the "newest tokens" and "latest boosts" feeds, not just search.
     use_token_profiles: bool = True
+    # GeckoTerminal's pool feeds. Search finds coins by *name*; these find them
+    # by what is actually being traded, which is what stops one fashionable
+    # ticker from filling a whole scan.
+    use_trending_pools: bool = True
+    use_top_pools: bool = True
+    use_new_pools: bool = False     # minutes-old pools; the age filter eats most
+    # How many coins sharing a ticker family (STONK, STONKS, STONK2...) may be
+    # considered in one cycle. 0 disables the cap.
+    max_per_symbol: int = 2
     dexscreener_base_url: str = "https://api.dexscreener.com"
+    geckoterminal_base_url: str = "https://api.geckoterminal.com/api/v2"
+    # GeckoTerminal's keyless tier is ~30 requests a minute.
+    gecko_rate_limit_per_minute: int = 30
     # Jupiter's keyless tier. With a paid key (JUPITER_API_KEY in the env) point
     # these at https://api.jup.ag/swap/v1 and https://api.jup.ag/price/v2.
     jupiter_quote_url: str = "https://lite-api.jup.ag/swap/v1"
@@ -358,6 +370,7 @@ LEGACY_EXAMPLE_FINGERPRINTS = {
     "b4d080ed648a6ce1bc037703544d15c47717281a1dc535fe889d22da3be81370",
     "0b419c4f22474a8eb5e7719ae86ca77c6e2df8ecf870383639112878fd77cb49",
     "0ed372b12dbc45abdf7e00781dba0abdace679bc44c4c83ee7400d2dad295693",
+    "937ebaca630dc6889badccc7bf808b9bfdfbef9438f62d2653f9606d05fb4207",
 }
 
 

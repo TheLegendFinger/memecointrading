@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
 from .config import BotConfig
-from .data.dexscreener import DexScreenerClient
+from .data import DexScreenerClient, build_dexscreener, discover_candidates
 from .data.jupiter import JupiterClient
 from .execution import build_executor
 from .execution.base import Executor
@@ -66,15 +66,7 @@ class TradingEngine:
         self.config = config
         self.storage = storage or open_storage(config.state_db)
 
-        self.data = data or DexScreenerClient(
-            base_url=config.data.dexscreener_base_url,
-            chain=config.data.chain,
-            timeout=config.data.request_timeout,
-            max_retries=config.data.max_retries,
-            backoff_seconds=config.data.backoff_seconds,
-            rate_limit_per_minute=config.data.rate_limit_per_minute,
-            cache_ttl_seconds=config.data.cache_ttl_seconds,
-        )
+        self.data = data or build_dexscreener(config.data)
         self.jupiter = jupiter or JupiterClient(
             quote_url=config.data.jupiter_quote_url,
             price_url=config.data.jupiter_price_url,
@@ -281,13 +273,7 @@ class TradingEngine:
             return
 
         try:
-            candidates = self.data.discover(
-                self.config.data.search_terms,
-                use_boosted_feed=self.config.data.use_boosted_feed,
-                use_token_profiles=self.config.data.use_token_profiles,
-                max_candidates=self.config.data.max_candidates,
-                feed_limit=self.config.data.feed_limit,
-            )
+            candidates = discover_candidates(self.data, self.config.data)
         except Exception as exc:  # pragma: no cover - network dependent
             log.error("Discovery failed: %s", exc)
             report.errors.append(f"discovery: {exc}")

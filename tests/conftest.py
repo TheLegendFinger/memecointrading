@@ -81,10 +81,10 @@ class FakeDexScreener:
         self.pairs.pop(token_address, None)
 
     # DexScreenerClient API surface used by the engine
-    def discover(self, search_terms: Iterable[str], use_boosted_feed: bool = True,
-                 use_token_profiles: bool = True, max_candidates: int = 400,
-                 feed_limit: int = 120) -> List[PairSnapshot]:
+    def discover(self, search_terms: Iterable[str], max_candidates: int = 400,
+                 **feeds) -> List[PairSnapshot]:
         self.discover_calls += 1
+        self.discover_feeds = feeds
         return list(self.pairs.values())[:max_candidates]
 
     def best_pair(self, token_address: str) -> Optional[PairSnapshot]:

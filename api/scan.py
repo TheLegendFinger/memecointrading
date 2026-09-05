@@ -13,7 +13,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from api._common import JsonHandler, int_param, load_bot_config, query_params  # noqa: E402
-from memebot.data.dexscreener import DexScreenerClient  # noqa: E402
+from memebot.data import build_dexscreener, discover_candidates  # noqa: E402
 from memebot.strategy import CandidateFilter, build_strategy  # noqa: E402
 
 
@@ -24,20 +24,8 @@ class handler(JsonHandler):  # noqa: N801
         limit = int_param(query_params(self.path), "limit", 20, 100)
         config = load_bot_config()
 
-        data = DexScreenerClient(
-            base_url=config.data.dexscreener_base_url,
-            chain=config.data.chain,
-            timeout=config.data.request_timeout,
-            max_retries=1,
-            rate_limit_per_minute=config.data.rate_limit_per_minute,
-        )
-        candidates = data.discover(
-            config.data.search_terms,
-            use_boosted_feed=config.data.use_boosted_feed,
-            use_token_profiles=config.data.use_token_profiles,
-            max_candidates=config.data.max_candidates,
-            feed_limit=config.data.feed_limit,
-        )
+        data = build_dexscreener(config.data, max_retries=1)
+        candidates = discover_candidates(data, config.data)
         result = CandidateFilter(config.filters).apply(candidates)
         strategy = build_strategy(config.strategy.name, config.strategy)
 

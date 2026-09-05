@@ -24,6 +24,14 @@ data:
                  "moon", "elon", "trump", "ai", "meme", "coin", "baby", "gold", "chad", "wojak"]
   use_boosted_feed: true
   use_token_profiles: true
+  # Search finds coins by NAME. These find them by what is actually being
+  # traded, which is what stops one fashionable ticker filling a whole scan.
+  use_trending_pools: true       # GeckoTerminal trending
+  use_top_pools: true            # busiest pools by 24h volume
+  use_new_pools: false           # minutes old; the age filter eats most of it
+  # How many coins sharing a ticker family (STONK, STONKS, STONK2...) may be
+  # considered in one cycle. 0 turns the cap off.
+  max_per_symbol: 2
   max_candidates: 400            # pairs scored per cycle
   feed_limit: 120                # how deep to read each feed before batching
 

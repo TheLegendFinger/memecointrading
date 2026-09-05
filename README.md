@@ -37,7 +37,7 @@ time, then opens a menu — everything is a number:
 ```
   ╋╋╋╋╋╋╋╋╋╋┏┓╋╋┏┓
   ┏━━┳━┳━━┳━┫┗┳━┫┗┓
-  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.2.1
+  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.3.0
   ┗┻┻┻━┻┻┻┻━┻━┻━┻━┛   LIVE - real money
 
    $1,043.18 · $812.40 cash · 2 open · +4.32%
@@ -92,7 +92,7 @@ what is or isn't working:
   [PASS] dexscreener boosts       142ms  10 boosted token(s)
   [PASS] jupiter price            180ms  SOL = $198.44
   [PASS] jupiter routing          301ms  0.1 SOL routes to 19.81 USDC via Whirlpool (impact 0.004%)
-  [PASS] candidate pipeline      2914ms  118 scanned -> 24 passed filters -> 3 above min_score 0.55
+  [PASS] candidate pipeline      2914ms  318 scanned -> 24 passed filters -> 3 above min_score 0.55 | found by: search 190, trending 55, busiest 43, boosts 20, profiles 10
   [PASS] execution                 96ms  live via Jupiter | wallet 7xKX...9Fda | 0.42 SOL | arms itself when you start trading
 ```
 
@@ -240,10 +240,11 @@ phone. Locally, `python scripts/dev_server.py` serves it if you want it.
 ## How a cycle works
 
 ```
-   DexScreener: 20 searches + boost leaderboards + newest token profiles
+   five feeds, two kinds (see "How coins are found" below)
                     │
                     ▼
-        [1] discover up to 400 candidate pairs (~31 requests)
+        [1] discover up to 400 candidate pairs (~35 requests)
+            de-duplicated by token, capped per ticker family
                     │
                     ▼
         [2] hard filters  ──────────────► rejected (liquidity, age, rug ratio,
@@ -265,6 +266,38 @@ phone. Locally, `python scripts/dev_server.py` serves it if you want it.
             stop loss · trailing stop · take profit · time stop ·
             liquidity-drain exit · stale-data exit · momentum reversal
 ```
+
+### How coins are found
+
+Step [1] is worth spelling out, because it is where a scan goes wrong in a way
+that is hard to see from the outside.
+
+| Feed | What it ranks by | Source |
+| --- | --- | --- |
+| `search_terms` | **name** — text match on symbol and name | DexScreener `/latest/dex/search` |
+| `use_boosted_feed` | what someone is paying to promote | DexScreener boost leaderboards |
+| `use_token_profiles` | newest tokens to publish a profile | DexScreener token profiles |
+| `use_trending_pools` | **trading activity** right now | GeckoTerminal trending pools |
+| `use_top_pools` | 24h volume | GeckoTerminal pools |
+| `use_new_pools` | pool creation time (off by default) | GeckoTerminal new pools |
+
+Search is the trap. It matches *text*, so asking for twenty fashionable words
+returns whatever happens to be called those words — and when one ticker
+catches, twenty near-identical copycats launch within the hour and every one of
+them matches. A scan can come back looking like a single coin's fan club.
+
+Two things stop that. The pool feeds rank by what is actually being traded and
+do not care what anything is called. And `data.max_per_symbol` (default 2) caps
+how many coins from one ticker family — STONK, STONKS, $STONK, STONK2 all
+collapse to the same family — can be considered in a cycle, keeping the busiest.
+
+Feeds are interleaved rather than concatenated, so a long one cannot crowd out
+the rest, and every candidate is then priced by DexScreener alone: GeckoTerminal
+only ever contributes *names to look at*, never a number the bot trades on.
+
+`scan` shows which feed found each coin in its `FOUND BY` column, and `doctor`
+prints the per-feed breakdown. If everything says `search`, the pool feeds are
+unreachable and discovery has quietly narrowed to name matching.
 
 ## What an order actually does
 
@@ -357,7 +390,9 @@ Worth tuning first:
 | Setting | Default | Why you would change it |
 | --- | --- | --- |
 | `strategy.min_score` | `0.55` | The main dial. `0.65` is a coin clearly running (+3-4% on 5m, +18% on 1h, 3x its own volume, 2:1 buys); `0.45` is decent; `0.30` is warming up; under `0.10` is flat or falling. |
-| `data.search_terms` | 20 terms | How wide the net is. Each term is one request returning ~30 pairs. |
+| `data.search_terms` | 20 terms | How wide the net is by *name*. Each term is one request returning ~30 pairs. |
+| `data.max_per_symbol` | `2` | How many coins from one ticker family get through per cycle. `0` turns the cap off. |
+| `data.use_trending_pools` | `true` | Discovery by trading activity rather than by name. Turning it off narrows the scan to text matching. |
 | `data.max_candidates` | `400` | How many pairs a cycle scores. |
 | `risk.position_size_pct` | `0.08` | Fraction of equity per position. |
 | `risk.stop_loss_pct` | `0.20` | Too tight and you get stopped out of every winner. |

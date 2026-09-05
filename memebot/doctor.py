@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, List, Optional
 
 from .config import BotConfig
-from .data.dexscreener import DexScreenerClient
+from .data import DexScreenerClient, build_dexscreener, discover_candidates
 from .data.jupiter import JupiterClient
 from .models import USDC_MINT, WSOL_MINT
 from .storage import is_postgres_dsn, open_storage
@@ -131,14 +131,7 @@ def _run_checks(
     report.run("state store", check_state)
 
     # ---- DexScreener -------------------------------------------------------
-    data = data or DexScreenerClient(
-        base_url=config.data.dexscreener_base_url,
-        chain=config.data.chain,
-        timeout=config.data.request_timeout,
-        max_retries=1,
-        rate_limit_per_minute=config.data.rate_limit_per_minute,
-        cache_ttl_seconds=0.0,
-    )
+    data = data or build_dexscreener(config.data, max_retries=1, cache_ttl_seconds=0.0)
 
     def check_search():
         # Go through the raw HTTP client so a transport error surfaces here
@@ -217,17 +210,29 @@ def _run_checks(
 
         report.run("jupiter routing", check_quote)
 
+    # ---- GeckoTerminal pool feeds ------------------------------------------
+    wants_pools = (config.data.use_trending_pools or config.data.use_top_pools
+                   or config.data.use_new_pools)
+    if wants_pools:
+        def check_pools():
+            gecko = getattr(data, "gecko", None)
+            if gecko is None:
+                return WARN, "no GeckoTerminal client - discovery is by name only"
+            trending = gecko.trending_tokens(limit=10)
+            if not trending:
+                return WARN, (
+                    "no trending pools came back - discovery falls back to name "
+                    "search, which is narrower"
+                )
+            return OK, f"{len(trending)} trending token(s); e.g. {trending[0][:8]}..."
+
+        report.run("geckoterminal pools", check_pools)
+
     # ---- the funnel, end to end -------------------------------------------
     def check_pipeline():
         from .strategy import CandidateFilter, build_strategy
 
-        candidates = data.discover(
-            config.data.search_terms,
-            use_boosted_feed=config.data.use_boosted_feed,
-            use_token_profiles=config.data.use_token_profiles,
-            max_candidates=config.data.max_candidates,
-            feed_limit=config.data.feed_limit,
-        )
+        candidates = discover_candidates(data, config.data)
         if not candidates:
             return FAIL, "discovery returned no pairs at all"
 
@@ -240,6 +245,12 @@ def _run_checks(
             f"{len(candidates)} scanned -> {len(result.passed)} passed filters -> "
             f"{len(tradable)} above min_score {config.strategy.min_score:.2f}"
         )
+        sources = getattr(data, "last_sources", {}) or {}
+        if sources:
+            detail += " | found by: " + ", ".join(
+                f"{name} {count}" for name, count in
+                sorted(sources.items(), key=lambda kv: -kv[1])
+            )
         if result.rejections:
             detail += f" | top rejections: {result.summary()}"
         if len(candidates) < 100:

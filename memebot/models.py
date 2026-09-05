@@ -55,6 +55,8 @@ class PairSnapshot:
     txns: Dict[str, Dict[str, int]] = field(default_factory=dict)
     pair_created_at: float = 0.0  # epoch seconds
     url: str = ""
+    # Which discovery feed surfaced this pair, for `scan` and the health check.
+    source: str = ""
     fetched_at: float = field(default_factory=time.time)
 
     # ---- convenience accessors -------------------------------------------------

@@ -22,7 +22,7 @@ from . import __version__
 from .config import BotConfig, load_config
 from .ui import (
     BOLD, CYAN, DIM, GREEN, GREY, RED, RESET, WHITE, YELLOW,
-    Glyphs, box, clear_screen, money, paint, pct,
+    Glyphs, box, clear_screen, money, paint, pct, wordmark,
 )
 
 CONFIG = "config.yaml"
@@ -92,7 +92,7 @@ class Menu:
 
             storage = open_storage(config.state_db)
             try:
-                portfolio = Portfolio(storage, config.risk.starting_cash_usd)
+                portfolio = Portfolio(storage)
                 stats = portfolio.stats()
             finally:
                 storage.close()
@@ -120,7 +120,17 @@ class Menu:
         if self.clear:
             clear_screen()
 
-        self.output(paint(box(f"memebot {__version__}", "LIVE", glyphs=self.glyphs), YELLOW))
+        art = wordmark()
+        self.output("")
+        for index, line in enumerate(art):
+            # The version and the live badge ride alongside the last two lines,
+            # so the header stays four lines tall rather than six.
+            suffix = ""
+            if index == len(art) - 2:
+                suffix = paint(f"   v{__version__}", GREY)
+            elif index == len(art) - 1:
+                suffix = paint("   LIVE - real money", YELLOW)
+            self.output("  " + paint(line, BOLD, CYAN) + suffix)
         self.output("")
         self.output(self._state_line())
         self.output("")
@@ -485,7 +495,7 @@ class Menu:
         config = self.load()
         storage = open_storage(config.state_db)
         try:
-            return len(Portfolio(storage, config.risk.starting_cash_usd).positions)
+            return len(Portfolio(storage).positions)
         finally:
             storage.close()
 

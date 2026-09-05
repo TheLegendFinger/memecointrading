@@ -24,16 +24,25 @@ class DataConfig:
     """Market data sources and discovery."""
 
     chain: str = "solana"
-    # DexScreener search terms used to discover candidate pairs.
-    search_terms: list = field(default_factory=lambda: ["SOL", "WSOL", "pump", "bonk"])
+    # DexScreener search terms used to discover candidate pairs. Each returns
+    # up to ~30 pairs, so more terms means a genuinely wider net rather than
+    # the same coins twice - they are de-duplicated by token afterwards.
+    search_terms: list = field(default_factory=lambda: [
+        "SOL", "WSOL", "USDC", "pump", "bonk", "wif", "cat", "dog", "inu", "pepe",
+        "moon", "elon", "trump", "ai", "meme", "coin", "baby", "gold", "chad", "wojak",
+    ])
     # Also pull the boosted/trending token feeds.
     use_boosted_feed: bool = True
-    max_candidates: int = 120
+    # How many pairs a cycle considers. Tokens resolve 30 per request, so a wide
+    # scan costs a handful of calls rather than hundreds.
+    max_candidates: int = 400
+    # How deep to read each discovery feed before batching those lookups.
+    feed_limit: int = 120
     request_timeout: float = 12.0
     max_retries: int = 3
     backoff_seconds: float = 1.0
-    # Keep well under DexScreener's published 300 req/min limit.
-    rate_limit_per_minute: int = 120
+    # DexScreener publishes ~300 req/min for search; stay under it.
+    rate_limit_per_minute: int = 240
     cache_ttl_seconds: float = 5.0
     # Also sample the "newest tokens" and "latest boosts" feeds, not just search.
     use_token_profiles: bool = True
@@ -91,7 +100,6 @@ class StrategyConfig:
 
 @dataclass
 class RiskConfig:
-    starting_cash_usd: float = 1_000.0
     max_open_positions: int = 5
     # Size each entry as a fraction of current equity.
     position_size_pct: float = 0.08
@@ -224,7 +232,6 @@ def load_dotenv(path: str = ".env") -> None:
 _ENV_OVERRIDES = {
     "MEMEBOT_POLL_INTERVAL": ("poll_interval_seconds", float),
     "MEMEBOT_LOG_LEVEL": ("log_level", str),
-    "MEMEBOT_STARTING_CASH": ("risk.starting_cash_usd", float),
     "MEMEBOT_MAX_POSITIONS": ("risk.max_open_positions", int),
     "MEMEBOT_POSITION_SIZE_PCT": ("risk.position_size_pct", float),
     "MEMEBOT_SLIPPAGE_BPS": ("execution.slippage_bps", int),
@@ -260,6 +267,11 @@ def _check_removed_keys(data: Dict[str, Any], path: str) -> None:
         raise ValueError(
             f"{', '.join(sorted(stale))} no longer exist - they configured the paper "
             f"trading simulator, which has been removed. Delete them from {path}."
+        )
+    if "starting_cash_usd" in (data.get("risk") or {}):
+        raise ValueError(
+            "risk.starting_cash_usd no longer exists - the wallet is the bankroll, read "
+            f"from the chain at the start of every cycle. Delete it from {path}."
         )
 
 

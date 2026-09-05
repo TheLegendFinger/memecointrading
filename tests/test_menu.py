@@ -49,6 +49,26 @@ def test_every_item_is_shown_with_its_number_and_purpose():
             assert item.description in driver.text
 
 
+def test_the_wordmark_is_shown():
+    menu, driver = menu_for("0")
+    menu.run()
+    from memebot.ui import wordmark
+
+    for line in wordmark():
+        assert line.rstrip() in driver.text
+
+
+def test_the_wordmark_falls_back_to_ascii_on_a_limited_console(monkeypatch):
+    """A console that cannot encode box drawing must not crash on the title."""
+    import memebot.ui as ui
+
+    monkeypatch.setattr(ui, "_UNICODE_OK", False)
+    monkeypatch.setattr(ui, "_ENABLED", False)
+    menu, driver = menu_for("0")
+    menu.run()
+    driver.text.encode("ascii")
+
+
 def test_the_sections_are_labelled():
     menu, driver = menu_for("0")
     menu.run()

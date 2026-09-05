@@ -2,6 +2,7 @@ import pytest
 
 from memebot.models import Fill, Order, Side, Token
 from memebot.portfolio import Portfolio
+from tests.conftest import fund
 from memebot.storage import Storage
 
 TOKEN = Token("mint-wif", "WIF")
@@ -22,7 +23,7 @@ def _sell(portfolio, price=1.0, tokens=100.0, fee=1.0):
 
 
 def test_buy_reduces_cash_and_opens_position(storage):
-    p = Portfolio(storage, 1_000.0)
+    p = fund(Portfolio(storage))
     _buy(p, price=1.0, tokens=100.0, fee=1.0)
 
     assert p.cash == pytest.approx(899.0)
@@ -33,7 +34,7 @@ def test_buy_reduces_cash_and_opens_position(storage):
 
 
 def test_full_exit_realizes_pnl_and_closes_position(storage):
-    p = Portfolio(storage, 1_000.0)
+    p = fund(Portfolio(storage))
     _buy(p, price=1.0, tokens=100.0, fee=1.0)
     realized = _sell(p, price=1.5, tokens=100.0, fee=1.5)
 
@@ -45,7 +46,7 @@ def test_full_exit_realizes_pnl_and_closes_position(storage):
 
 
 def test_partial_exit_keeps_proportional_cost_basis(storage):
-    p = Portfolio(storage, 1_000.0)
+    p = fund(Portfolio(storage))
     _buy(p, price=1.0, tokens=100.0, fee=1.0)
     realized = _sell(p, price=2.0, tokens=40.0, fee=0.8)
 
@@ -58,7 +59,7 @@ def test_partial_exit_keeps_proportional_cost_basis(storage):
 
 
 def test_averaging_up_recomputes_avg_price(storage):
-    p = Portfolio(storage, 1_000.0)
+    p = fund(Portfolio(storage))
     _buy(p, price=1.0, tokens=100.0, fee=1.0)
     _buy(p, price=2.0, tokens=100.0, fee=2.0)
 
@@ -69,7 +70,7 @@ def test_averaging_up_recomputes_avg_price(storage):
 
 
 def test_marking_updates_equity_and_high_water(storage):
-    p = Portfolio(storage, 1_000.0)
+    p = fund(Portfolio(storage))
     _buy(p, price=1.0, tokens=100.0, fee=1.0)
     p.mark(TOKEN.address, 3.0, liquidity_usd=200_000)
     p.mark(TOKEN.address, 2.0)
@@ -83,7 +84,7 @@ def test_marking_updates_equity_and_high_water(storage):
 
 
 def test_failed_fills_change_nothing(storage):
-    p = Portfolio(storage, 1_000.0)
+    p = fund(Portfolio(storage))
     order = Order(token=TOKEN, side=Side.BUY, reference_price=1.0, usd_amount=100)
     assert p.apply_fill(Fill(order=order, ok=False, error="boom")) == 0.0
     assert p.cash == 1_000.0
@@ -93,12 +94,12 @@ def test_failed_fills_change_nothing(storage):
 def test_state_survives_a_restart(tmp_path):
     db = str(tmp_path / "state.sqlite3")
     store = Storage(db)
-    p = Portfolio(store, 1_000.0)
+    p = fund(Portfolio(store))
     _buy(p, price=1.0, tokens=100.0, fee=1.0)
     p.mark(TOKEN.address, 1.25)
     store.close()
 
-    reopened = Portfolio(Storage(db), 1_000.0)
+    reopened = Portfolio(Storage(db))
     assert reopened.cash == pytest.approx(899.0)
     pos = reopened.position(TOKEN.address)
     assert pos is not None and pos.quantity == 100.0
@@ -106,7 +107,7 @@ def test_state_survives_a_restart(tmp_path):
 
 
 def test_stats_report_win_rate(storage):
-    p = Portfolio(storage, 1_000.0)
+    p = fund(Portfolio(storage))
     _buy(p, price=1.0, tokens=100.0, fee=1.0)
     _sell(p, price=1.5, tokens=100.0, fee=1.0)
     _buy(p, price=1.0, tokens=100.0, fee=1.0)
@@ -117,3 +118,29 @@ def test_stats_report_win_rate(storage):
     assert stats["wins"] == 1 and stats["losses"] == 1
     assert stats["win_rate"] == 0.5
     assert stats["total_fees_usd"] == pytest.approx(4.0)
+
+
+# ---- there is no configured bankroll -------------------------------------------
+def test_a_fresh_portfolio_has_nothing_to_spend(storage):
+    """No configured starting cash: until the wallet is read, there is nothing.
+
+    Being wrong in this direction is safe - the bot cannot size a trade against
+    money it has not seen.
+    """
+    p = Portfolio(storage)
+    assert p.cash == 0.0
+    assert p.starting_cash == 0.0
+    assert p.equity == 0.0
+
+
+def test_the_wallet_read_becomes_the_bankroll(storage):
+    p = Portfolio(storage)
+    p.set_cash(87.40)
+    p.set_starting_cash(87.40)
+
+    assert p.cash == pytest.approx(87.40)
+    assert p.total_return_pct == pytest.approx(0.0)
+
+
+def test_a_zero_baseline_does_not_divide_by_zero(storage):
+    assert Portfolio(storage).total_return_pct == 0.0

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Optional
+from typing import List, Optional
 
 # ---- colour --------------------------------------------------------------------
 RESET = "\033[0m"
@@ -100,6 +100,37 @@ class Glyphs:
         self.arrow = "›" if fancy else ">"
         self.up = "▲" if fancy else "^"
         self.down = "▼" if fancy else "v"
+
+
+# The wordmark. Heavy box-drawing characters, so it needs the same encoding
+# check everything else does - a console on an old code page gets the plain
+# version rather than a UnicodeEncodeError.
+WORDMARK = [
+    "╋╋╋╋╋╋╋╋╋╋┏┓╋╋┏┓",
+    "┏━━┳━┳━━┳━┫┗┳━┫┗┓",
+    "┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫",
+    "┗┻┻┻━┻┻┻┻━┻━┻━┻━┛",
+]
+
+WORDMARK_ASCII = [
+    " _ _  _ _ _  _ ___  __  ___",
+    "| ' \/ ' ' \/ '| _ \/ _ \|_ _|",
+    "|_|_|\_|_|_|\_|_|___/\___/ |_|",
+]
+
+
+def wordmark(fancy: Optional[bool] = None) -> List[str]:
+    """The memebot wordmark, in whichever character set this console can print."""
+    fancy = unicode_ok() if fancy is None else fancy
+    lines = WORDMARK if fancy else WORDMARK_ASCII
+    if fancy:
+        encoding = getattr(sys.stdout, "encoding", None) or "ascii"
+        try:
+            "".join(WORDMARK).encode(encoding)
+        except (UnicodeEncodeError, LookupError):
+            lines = WORDMARK_ASCII
+    width = max(len(line) for line in lines)
+    return [line.ljust(width) for line in lines]
 
 
 def clear_screen() -> None:

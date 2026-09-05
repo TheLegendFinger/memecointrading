@@ -42,6 +42,7 @@ class SimulatedExecutor(Executor):
         failure_rate: float = 0.0,
         base_slippage_bps: int = 30,
         use_live_quotes: bool = False,
+        wallet_usd: float = 1_000.0,
     ) -> None:
         self.config = config
         self.cfg = config.execution
@@ -52,6 +53,9 @@ class SimulatedExecutor(Executor):
         self.failure_rate = failure_rate
         self.base_slippage_bps = base_slippage_bps
         self.use_live_quotes = use_live_quotes
+        # A pretend wallet, so the engine's balance sync has something real to
+        # read. It moves with the fills, exactly as the on-chain balance does.
+        self._wallet_usd = wallet_usd
         self.rng = rng or random.Random()
 
     # ---- fill model ------------------------------------------------------------
@@ -145,7 +149,7 @@ class SimulatedExecutor(Executor):
             token_amount = order.token_amount
             gross = token_amount * price
 
-        return Fill(
+        fill = Fill(
             order=order,
             ok=True,
             price=price,
@@ -153,8 +157,14 @@ class SimulatedExecutor(Executor):
             usd_amount=gross,
             fee_usd=self._fees(gross),
             slippage_bps=slip * 10_000.0,
-            tx_signature=f"paper-{uuid.uuid4().hex[:16]}",
+            tx_signature=f"sim-{uuid.uuid4().hex[:16]}",
         )
+        self._wallet_usd += fill.cash_delta
+        return fill
+
+    def available_cash_usd(self) -> Optional[float]:
+        """What the pretend wallet can spend, the way a real one reports it."""
+        return self._wallet_usd
 
     def price_for(self, token_address: str) -> float:
         if self.data is not None:

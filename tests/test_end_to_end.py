@@ -113,7 +113,7 @@ def test_trading_halts_after_a_large_drawdown(config, tmp_path):
 
     bot.run_cycle()
     bot.portfolio.day_start_equity()
-    bot.portfolio.cash -= bot.portfolio.equity * 0.10  # simulate a bad day
+    bot.executor._wallet_usd *= 0.85    # the wallet has a bad day
     report = bot.run_cycle()
 
     assert report.halted_reason

@@ -34,7 +34,7 @@ def test_cycle_opens_a_position_on_a_strong_candidate(config, hot_pair):
     assert report.passed_filters == 1
     assert len(report.opened) == 1
     assert engine.portfolio.has_position(hot_pair.base.address)
-    assert engine.portfolio.cash < config.risk.starting_cash_usd
+    assert engine.portfolio.cash < 1_000.0
 
 
 def test_weak_candidates_are_ignored(config):
@@ -59,7 +59,7 @@ def test_take_profit_closes_the_position(config, hot_pair):
     assert len(report.closed) == 1
     assert "take profit" in report.closed[0].order.reason
     assert not engine.portfolio.positions
-    assert engine.portfolio.cash > config.risk.starting_cash_usd
+    assert engine.portfolio.cash > 1_000.0
 
 
 def test_stop_loss_closes_the_position(config, hot_pair):
@@ -71,7 +71,7 @@ def test_stop_loss_closes_the_position(config, hot_pair):
 
     assert len(report.closed) == 1
     assert "stop loss" in report.closed[0].order.reason
-    assert engine.portfolio.equity < config.risk.starting_cash_usd
+    assert engine.portfolio.equity < 1_000.0
 
 
 def test_liquidity_drain_forces_an_exit(config, hot_pair):
@@ -143,14 +143,15 @@ def test_dry_run_never_trades(config, hot_pair):
     assert report.signals >= 1
     assert not report.opened
     assert not engine.portfolio.positions
-    assert engine.portfolio.cash == config.risk.starting_cash_usd
+    assert engine.portfolio.cash == 1_000.0
 
 
 def test_halt_on_daily_loss_stops_new_entries(config, hot_pair):
     config.risk.max_daily_loss_pct = 0.05
     engine, _ = build_engine(config, [hot_pair])
+    engine.sync_live_balance()          # first read: $1,000
     engine.portfolio.day_start_equity()
-    engine.portfolio.cash = 800.0  # -20% on the day
+    engine.executor._wallet_usd = 800.0  # the wallet is down 20% on the day
 
     report = engine.run_cycle()
     assert report.halted_reason
@@ -163,7 +164,7 @@ def test_failed_orders_are_reported_and_leave_cash_untouched(config, hot_pair):
 
     assert not report.opened
     assert report.errors
-    assert engine.portfolio.cash == config.risk.starting_cash_usd
+    assert engine.portfolio.cash == 1_000.0
 
 
 def test_missing_market_data_falls_back_to_executor_pricing(config, hot_pair):

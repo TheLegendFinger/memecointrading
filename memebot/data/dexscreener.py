@@ -10,6 +10,7 @@ Endpoints used (all public, documented at https://docs.dexscreener.com):
   GET /token-boosts/top/v1
   GET /token-boosts/latest/v1
   GET /token-profiles/latest/v1
+  GET /tokens/v1/{chain}/{addresses}     (up to 30 tokens per request)
 """
 
 from __future__ import annotations
@@ -197,6 +198,22 @@ class DexScreenerClient:
                 break
         return addresses
 
+    def pairs_for_tokens(self, addresses: Iterable[str]) -> List[PairSnapshot]:
+        """Pairs for many tokens at once - 30 per request instead of one each.
+
+        This is what makes a wide scan affordable: pulling 300 tokens one at a
+        time would blow the rate limit, and in ten batched calls it does not.
+        """
+        wanted = [a for a in addresses if a]
+        out: List[PairSnapshot] = []
+        for i in range(0, len(wanted), 30):
+            chunk = wanted[i : i + 30]
+            data = self._get(f"/tokens/v1/{self.chain}/{','.join(chunk)}")
+            if isinstance(data, dict):
+                data = data.get("pairs")
+            out.extend(self._pairs_for_chain(data))
+        return out
+
     def boosted_tokens(self, limit: int = 30) -> List[str]:
         """Tokens from the paid-boost leaderboard - a proxy for what is being
         promoted right now. Returns token addresses, not pairs."""
@@ -224,14 +241,19 @@ class DexScreenerClient:
         search_terms: Iterable[str],
         use_boosted_feed: bool = True,
         use_token_profiles: bool = True,
-        max_candidates: int = 120,
+        max_candidates: int = 400,
+        feed_limit: int = 120,
     ) -> List[PairSnapshot]:
         """Build the candidate universe for one scan cycle.
 
-        Three funnels feed it: full-text search (broad, catches anything with
-        volume), the boost leaderboards (what is being promoted), and the newest
-        token profiles (early names). Results are de-duplicated by base token,
-        keeping the deepest pool, and sorted by 1h volume.
+        Three funnels feed it: full-text search (broad - anything with volume
+        under a matching name), the boost leaderboards (what is being promoted
+        right now), and the newest token profiles (early names). Feed tokens are
+        resolved in batches of 30, so widening the net costs a handful of
+        requests rather than hundreds.
+
+        Results are de-duplicated by base token, keeping the deepest pool, and
+        returned sorted by 1h volume - the busiest names first.
         """
         by_token: Dict[str, PairSnapshot] = {}
 
@@ -246,16 +268,18 @@ class DexScreenerClient:
 
         feed_addresses: List[str] = []
         if use_boosted_feed:
-            feed_addresses.extend(self.boosted_tokens())
+            feed_addresses.extend(self.boosted_tokens(limit=feed_limit))
         if use_token_profiles:
-            feed_addresses.extend(self.token_profiles())
+            feed_addresses.extend(self.token_profiles(limit=feed_limit))
 
+        unseen, seen = [], set()
         for address in feed_addresses:
-            if address in by_token:
+            if address in by_token or address in seen:
                 continue
-            pair = self.best_pair(address)
-            if pair:
-                add(pair)
+            seen.add(address)
+            unseen.append(address)
+        for snap in self.pairs_for_tokens(unseen):
+            add(snap)
 
         candidates = sorted(by_token.values(), key=lambda p: p.vol("h1"), reverse=True)
         return candidates[:max_candidates]

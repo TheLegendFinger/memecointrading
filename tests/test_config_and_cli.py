@@ -34,14 +34,12 @@ def test_yaml_file_overrides_defaults(tmp_path):
     path.write_text(
         "poll_interval_seconds: 45\n"
         "risk:\n"
-        "  starting_cash_usd: 5000\n"
         "  max_open_positions: 3\n"
         "filters:\n"
         "  min_liquidity_usd: 100000\n"
     )
     cfg = load_config(str(path))
     assert cfg.poll_interval_seconds == 45
-    assert cfg.risk.starting_cash_usd == 5000
     assert cfg.risk.max_open_positions == 3
     assert cfg.filters.min_liquidity_usd == 100000
     assert cfg.strategy.name == "momentum"  # untouched default
@@ -49,8 +47,8 @@ def test_yaml_file_overrides_defaults(tmp_path):
 
 def test_json_config_is_supported(tmp_path):
     path = tmp_path / "config.json"
-    path.write_text(json.dumps({"risk": {"starting_cash_usd": 250}}))
-    assert load_config(str(path)).risk.starting_cash_usd == 250
+    path.write_text(json.dumps({"risk": {"max_open_positions": 2}}))
+    assert load_config(str(path)).risk.max_open_positions == 2
 
 
 def test_unknown_keys_are_rejected(tmp_path):
@@ -67,18 +65,23 @@ def test_missing_file_is_an_error():
 
 def test_env_overrides_the_file(tmp_path, monkeypatch):
     path = tmp_path / "config.yaml"
-    path.write_text("risk:\n  starting_cash_usd: 100\n")
-    monkeypatch.setenv("MEMEBOT_STARTING_CASH", "777")
+    path.write_text("risk:\n  max_open_positions: 2\n")
     monkeypatch.setenv("MEMEBOT_MAX_POSITIONS", "9")
     cfg = load_config(str(path))
-    assert cfg.risk.starting_cash_usd == 777
     assert cfg.risk.max_open_positions == 9
 
 
 def test_explicit_overrides_beat_the_environment(tmp_path, monkeypatch):
-    monkeypatch.setenv("MEMEBOT_STARTING_CASH", "500")
-    cfg = load_config(None, {"risk.starting_cash_usd": 42.0})
-    assert cfg.risk.starting_cash_usd == 42.0
+    monkeypatch.setenv("MEMEBOT_MAX_POSITIONS", "9")
+    cfg = load_config(None, {"risk.max_open_positions": 2})
+    assert cfg.risk.max_open_positions == 2
+
+
+def test_a_config_still_setting_a_bankroll_says_what_happened(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("risk:\n  starting_cash_usd: 1000\n")
+    with pytest.raises(ValueError, match="wallet is the bankroll"):
+        load_config(str(path))
 
 
 @pytest.mark.parametrize(
@@ -111,21 +114,22 @@ def test_config_command_prints_effective_settings(capsys):
     assert cli.main(["config"]) == 0
     printed = json.loads(capsys.readouterr().out)
     assert "mode" not in printed
-    assert printed["risk"]["starting_cash_usd"] == 1000.0
+    assert "starting_cash_usd" not in printed["risk"]
 
 
 def test_status_command_on_a_fresh_database(tmp_path, capsys):
     db = str(tmp_path / "s.sqlite3")
     assert cli.main(["--db", db, "status"]) == 0
     out = capsys.readouterr().out
-    assert "equity" in out and "$1,000.00" in out
+    assert "equity" in out
+    assert "set on the first cycle from the wallet" in out
 
 
 def test_status_json_output(tmp_path, capsys):
     db = str(tmp_path / "s.sqlite3")
     assert cli.main(["--db", db, "status", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["equity_usd"] == 1000.0
+    assert payload["equity_usd"] == 0.0, "nothing until the wallet is read"
     assert payload["open_positions"] == 0
 
 

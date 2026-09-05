@@ -22,12 +22,17 @@ DAY_KEY = "day_start"
 
 
 class Portfolio:
-    def __init__(self, storage: Storage, starting_cash_usd: float = 1000.0) -> None:
+    def __init__(self, storage: Storage) -> None:
+        """Cash starts at nothing.
+
+        There is no configured bankroll: the wallet's on-chain balance is read
+        at the start of every cycle and becomes the cash figure. Until that
+        first read the bot has nothing to spend, which is the safe direction to
+        be wrong in - it cannot size a trade against money it has not seen.
+        """
         self.storage = storage
-        self.starting_cash = float(storage.get_state(START_KEY, starting_cash_usd))
-        if storage.get_state(START_KEY) is None:
-            storage.set_state(START_KEY, self.starting_cash)
-        self.cash: float = float(storage.get_state(CASH_KEY, self.starting_cash))
+        self.starting_cash = float(storage.get_state(START_KEY, 0.0) or 0.0)
+        self.cash: float = float(storage.get_state(CASH_KEY, 0.0) or 0.0)
         self.positions: Dict[str, Position] = storage.load_positions()
 
     # ---- accessors -------------------------------------------------------------

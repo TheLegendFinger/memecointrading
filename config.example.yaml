@@ -46,9 +46,9 @@ strategy:
   max_new_positions_per_cycle: 1 # one entry per cycle, no piling in
 
 risk:
-  # The wallet is the bankroll - its balance is read from the chain at the start
-  # of every cycle, so this is only a placeholder until the first read.
-  starting_cash_usd: 100
+  # There is no bankroll setting. The wallet's balance is read from the chain at
+  # the start of every cycle and that is what gets sized against - send more SOL
+  # in and it trades bigger, take some out and it trades smaller.
 
   max_open_positions: 3
   position_size_pct: 0.20        # 20% of a small bankroll per position

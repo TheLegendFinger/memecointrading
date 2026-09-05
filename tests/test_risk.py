@@ -6,7 +6,7 @@ from memebot.config import RiskConfig
 from memebot.models import Fill, Order, Position, Side, Token
 from memebot.portfolio import Portfolio
 from memebot.risk import RiskManager
-from tests.conftest import make_pair
+from tests.conftest import fund, make_pair
 
 TOKEN = Token("mint-wif", "WIF")
 
@@ -30,14 +30,14 @@ def _fund(portfolio, price=1.0, tokens=100.0):
 # ---- sizing --------------------------------------------------------------------
 def test_position_size_uses_equity_fraction(storage):
     risk = RiskManager(RiskConfig(position_size_pct=0.10, max_position_usd=1_000))
-    p = Portfolio(storage, 1_000.0)
+    p = fund(Portfolio(storage))
     assert risk.position_size_usd(p) == pytest.approx(100.0)
 
 
 def test_position_size_capped_by_pool_liquidity(storage):
     risk = RiskManager(RiskConfig(position_size_pct=0.5, max_position_usd=1_000,
                                   max_position_pct_of_liquidity=0.005))
-    p = Portfolio(storage, 1_000.0)
+    p = fund(Portfolio(storage))
     pair = make_pair(liquidity=40_000.0)
     # 0.5% of a $40k pool is $200, well below the $500 the equity rule wants.
     assert risk.position_size_usd(p, pair) == pytest.approx(200.0)
@@ -46,20 +46,20 @@ def test_position_size_capped_by_pool_liquidity(storage):
 def test_position_size_respects_cash_reserve(storage):
     risk = RiskManager(RiskConfig(position_size_pct=1.0, max_position_usd=10_000,
                                   cash_reserve_pct=0.10))
-    p = Portfolio(storage, 1_000.0)
+    p = fund(Portfolio(storage))
     assert risk.position_size_usd(p) == pytest.approx(900.0)
 
 
 def test_size_below_minimum_returns_zero(storage):
     risk = RiskManager(RiskConfig(position_size_pct=0.001, min_position_usd=10.0))
-    p = Portfolio(storage, 1_000.0)
+    p = fund(Portfolio(storage))
     assert risk.position_size_usd(p) == 0.0
 
 
 # ---- entry gating --------------------------------------------------------------
 def test_max_open_positions_blocks_new_entries(storage):
     risk = RiskManager(RiskConfig(max_open_positions=1))
-    p = Portfolio(storage, 1_000.0)
+    p = fund(Portfolio(storage))
     _fund(p)
     ok, reason = risk.can_open_position(p)
     assert not ok and "max_open_positions" in reason
@@ -67,7 +67,7 @@ def test_max_open_positions_blocks_new_entries(storage):
 
 def test_cooldown_after_a_loss(storage):
     risk = RiskManager(RiskConfig(cooldown_minutes_after_loss=30.0))
-    p = Portfolio(storage, 1_000.0)
+    p = fund(Portfolio(storage))
     risk.record_close(-50.0)
     ok, reason = risk.can_open_position(p)
     assert not ok and "cooling down" in reason
@@ -80,7 +80,7 @@ def test_cooldown_after_a_loss(storage):
 
 def test_daily_loss_limit_halts_trading(storage):
     risk = RiskManager(RiskConfig(max_daily_loss_pct=0.10, max_drawdown_pct=0.0))
-    p = Portfolio(storage, 1_000.0)
+    p = fund(Portfolio(storage))
     p.day_start_equity()          # anchor the day at $1,000
     p.cash = 850.0                # down 15%
     halted, reason = risk.should_halt(p)
@@ -89,7 +89,7 @@ def test_daily_loss_limit_halts_trading(storage):
 
 def test_max_drawdown_halts_trading(storage):
     risk = RiskManager(RiskConfig(max_daily_loss_pct=0.0, max_drawdown_pct=0.30))
-    p = Portfolio(storage, 1_000.0)
+    p = fund(Portfolio(storage))
     p.cash = 1_500.0
     p.snapshot_equity()           # peak recorded at $1,500
     p.cash = 900.0                # 40% off the peak
@@ -99,7 +99,7 @@ def test_max_drawdown_halts_trading(storage):
 
 def test_reentry_cooldown_blocks_the_same_token(storage):
     risk = RiskManager(RiskConfig(reentry_cooldown_minutes=60.0))
-    p = Portfolio(storage, 1_000.0)
+    p = fund(Portfolio(storage))
     _fund(p)
     sell = Order(token=TOKEN, side=Side.SELL, reference_price=1.0, token_amount=100.0)
     p.apply_fill(Fill(order=sell, ok=True, price=1.0, token_amount=100.0, usd_amount=100.0))
@@ -110,7 +110,7 @@ def test_reentry_cooldown_blocks_the_same_token(storage):
 
 def test_cannot_double_up_on_an_open_position(storage):
     risk = RiskManager(RiskConfig())
-    p = Portfolio(storage, 1_000.0)
+    p = fund(Portfolio(storage))
     _fund(p)
     ok, reason = risk.can_enter_token(p, TOKEN.address)
     assert not ok and "already holding" in reason

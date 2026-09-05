@@ -124,6 +124,7 @@ def cmd_scan(args: argparse.Namespace, config: BotConfig) -> int:
         use_boosted_feed=config.data.use_boosted_feed,
         use_token_profiles=config.data.use_token_profiles,
         max_candidates=config.data.max_candidates,
+        feed_limit=config.data.feed_limit,
     )
     result = engine.filter.apply(candidates)
     scored = sorted(
@@ -452,7 +453,7 @@ def cmd_status(args: argparse.Namespace, config: BotConfig) -> int:
     storage = open_storage(config.state_db)
     from .portfolio import Portfolio
 
-    portfolio = Portfolio(storage, config.risk.starting_cash_usd)
+    portfolio = Portfolio(storage)
     stats = portfolio.stats()
 
     if args.json:
@@ -464,7 +465,9 @@ def cmd_status(args: argparse.Namespace, config: BotConfig) -> int:
     print(f"  equity            {_money(stats['equity_usd'])}")
     print(f"  cash              {_money(stats['cash_usd'])}")
     print(f"  positions value   {_money(stats['positions_value_usd'])} ({stats['open_positions']} open)")
-    print(f"  starting cash     {_money(stats['starting_cash_usd'])}")
+    baseline = stats["starting_cash_usd"]
+    print(f"  baseline          {_money(baseline)}"
+          + ("" if baseline else "  (set on the first cycle from the wallet)"))
     print(f"  total return      {_pct(stats['total_return_pct'])}")
     print(f"  realized pnl      {_money(stats['realized_pnl_usd'])}")
     print(f"  unrealized pnl    {_money(stats['unrealized_pnl_usd'])}")

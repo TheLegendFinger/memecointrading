@@ -133,11 +133,29 @@ def test_discover_pulls_the_boosted_feed():
             {"chainId": "solana", "tokenAddress": "mint-boosted"},
             {"chainId": "ethereum", "tokenAddress": "0xnope"},
         ],
-        "/token-pairs/v1": [raw_pair("BOOST", "mint-boosted")],
+        "/token-profiles": [],
+        "/tokens/v1": [raw_pair("BOOST", "mint-boosted")],
     })
     client = DexScreenerClient(http=http)
     found = client.discover([], use_boosted_feed=True)
     assert [p.base.symbol for p in found] == ["BOOST"]
+
+
+def test_feed_tokens_are_resolved_in_batches_not_one_by_one():
+    """A wide scan has to be affordable: 30 tokens per request, not 30 requests."""
+    addresses = [f"mint-{i}" for i in range(65)]
+    http = FakeHttp({
+        "/latest/dex/search": {"pairs": []},
+        "/token-boosts": [{"chainId": "solana", "tokenAddress": a} for a in addresses],
+        "/token-profiles": [],
+        "/tokens/v1": [raw_pair("B", "mint-0")],
+    })
+    client = DexScreenerClient(http=http)
+    client.discover([], use_boosted_feed=True, use_token_profiles=False, feed_limit=65)
+
+    token_calls = [c for c in http.calls if "/tokens/v1" in c[0]]
+    assert len(token_calls) == 3, "65 tokens should be three requests, not 65"
+    assert all(len(c[0].split("/")[-1].split(",")) <= 30 for c in token_calls)
 
 
 def test_discover_respects_max_candidates():
@@ -328,3 +346,28 @@ def test_no_duplicate_candidates_when_the_default_is_configured():
 
     ordered = _candidates(PRICE_ENDPOINTS[0], PRICE_ENDPOINTS)
     assert ordered == PRICE_ENDPOINTS
+
+
+def test_the_default_search_is_wide():
+    """More terms means more coins seen, since each returns its own ~30 pairs."""
+    from memebot.config import DataConfig
+
+    cfg = DataConfig()
+    assert len(cfg.search_terms) >= 15
+    assert len(set(cfg.search_terms)) == len(cfg.search_terms), "no wasted duplicate calls"
+    assert cfg.max_candidates >= 300
+
+
+def test_a_wide_scan_stays_inside_the_rate_limit():
+    """Twenty searches plus batched token lookups, not hundreds of requests."""
+    from memebot.config import DataConfig
+
+    cfg = DataConfig()
+    searches = len(cfg.search_terms)
+    feeds = 3                                    # two boost feeds and the profiles
+    batches = -(-cfg.feed_limit * 2 // 30)       # both feeds, 30 tokens per request
+    per_cycle = searches + feeds + batches
+
+    assert per_cycle < cfg.rate_limit_per_minute, (
+        f"{per_cycle} requests a cycle would exceed the {cfg.rate_limit_per_minute}/min budget"
+    )

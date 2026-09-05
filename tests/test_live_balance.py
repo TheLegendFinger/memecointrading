@@ -14,7 +14,7 @@ from memebot.engine import TradingEngine
 from tests.fakes import SimulatedExecutor
 from memebot.portfolio import Portfolio
 from memebot.storage import Storage
-from tests.conftest import FakeDexScreener, make_pair
+from tests.conftest import FakeDexScreener, fund, make_pair
 
 
 class WalletExecutor(SimulatedExecutor):
@@ -38,17 +38,16 @@ def build(config, cash, pairs=None, seed=3):
     return engine, market
 
 
-def test_live_cash_comes_from_the_wallet_not_the_config(config):
-    config.risk.starting_cash_usd = 1_000.0   # the paper number
-    engine, _ = build(config, cash=87.40)     # what the wallet really holds
+def test_cash_comes_from_the_wallet(config):
+    """There is no configured bankroll at all - only what the wallet holds."""
+    engine, _ = build(config, cash=87.40)
 
     engine.sync_live_balance()
 
     assert engine.portfolio.cash == pytest.approx(87.40)
 
 
-def test_the_first_live_cycle_anchors_the_return_baseline(config):
-    config.risk.starting_cash_usd = 1_000.0
+def test_the_first_cycle_anchors_the_return_baseline(config):
     engine, _ = build(config, cash=87.40)
 
     engine.sync_live_balance()
@@ -88,14 +87,15 @@ def test_an_unreadable_balance_keeps_the_last_known_figure(config):
     assert engine.portfolio.cash == pytest.approx(120.0)
 
 
-def test_an_executor_without_a_wallet_keeps_the_bookkeeping_figure(config):
-    """The simulated executor in tests reports no balance; nothing should break."""
+def test_an_executor_that_reports_no_balance_leaves_cash_alone(config):
+    """An RPC that cannot be read must not silently zero the bankroll."""
     market = FakeDexScreener([])
-    executor = SimulatedExecutor(config, data=market, rng=random.Random(1))
+    executor = WalletExecutor(config, data=market, rng=random.Random(1), cash=None)
     engine = TradingEngine(config, storage=Storage(":memory:"), data=market, executor=executor)
+    engine.portfolio.set_cash(123.0)
 
     assert engine.sync_live_balance() is None
-    assert engine.portfolio.cash == pytest.approx(config.risk.starting_cash_usd)
+    assert engine.portfolio.cash == pytest.approx(123.0)
 
 
 def test_sizing_uses_the_wallet_balance(config):
@@ -124,7 +124,6 @@ def test_a_live_cycle_sizes_against_the_wallet_end_to_end(config):
     config.risk.position_size_pct = 0.25
     config.risk.max_position_usd = 25.0
     config.risk.min_position_usd = 5.0
-    config.risk.starting_cash_usd = 1_000.0   # must not influence anything
     hot = make_pair("BEST", chg_m5=12.0, chg_h1=55.0, vol_h1=400_000, vol_h24=960_000,
                     buys_m5=90, sells_m5=10, liquidity=700_000)
     engine, _ = build(config, cash=80.0, pairs=[hot])
@@ -145,7 +144,7 @@ def test_wallet_balance_is_persisted_across_restarts(config, tmp_path):
     engine.sync_live_balance()
     engine.storage.close()
 
-    revived = Portfolio(Storage(db), config.risk.starting_cash_usd)
+    revived = Portfolio(Storage(db))
     assert revived.cash == pytest.approx(42.0)
     assert revived.starting_cash == pytest.approx(42.0)
 
@@ -167,7 +166,6 @@ def test_a_full_live_cycle_with_the_real_executor(config, monkeypatch):
     config.risk.position_size_pct = 0.25
     config.risk.max_position_usd = 25.0
     config.risk.min_position_usd = 5.0
-    config.risk.starting_cash_usd = 10_000.0  # paper number, must be ignored
 
     hot = make_pair("BEST", price=0.01, chg_m5=12.0, chg_h1=55.0, vol_h1=400_000,
                     vol_h24=960_000, buys_m5=90, sells_m5=10, liquidity=700_000)

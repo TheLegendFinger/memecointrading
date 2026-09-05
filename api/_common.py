@@ -53,7 +53,7 @@ def load_bot_config(overrides: Optional[Dict[str, Any]] = None) -> BotConfig:
 
 def open_portfolio(config: BotConfig):
     storage = open_storage(config.state_db)
-    return storage, Portfolio(storage, config.risk.starting_cash_usd)
+    return storage, Portfolio(storage)
 
 
 def query_params(path: str) -> Dict[str, str]:

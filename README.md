@@ -37,9 +37,10 @@ That is the only command you need on either. It sets the project up the first
 time, then opens a menu — everything is a number:
 
 ```
- ╭────────────────────────────────────────────────────────────────╮
- │ memebot 1.0.0                                             LIVE │
- ╰────────────────────────────────────────────────────────────────╯
+  ╋╋╋╋╋╋╋╋╋╋┏┓╋╋┏┓
+  ┏━━┳━┳━━┳━┫┗┳━┫┗┓
+  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.0.0
+  ┗┻┻┻━┻┻┻┻━┻━┻━┻━┛   LIVE - real money
 
    $1,043.18 · $812.40 cash · 2 open · +4.32%
 
@@ -236,10 +237,10 @@ phone. Locally, `python scripts/dev_server.py` serves it if you want it.
 ## How a cycle works
 
 ```
-   DexScreener: search + boost leaderboards + newest token profiles
+   DexScreener: 20 searches + boost leaderboards + newest token profiles
                     │
                     ▼
-        [1] discover ~120 candidate pairs
+        [1] discover up to 400 candidate pairs (~31 requests)
                     │
                     ▼
         [2] hard filters  ──────────────► rejected (liquidity, age, rug ratio,
@@ -329,10 +330,12 @@ machine, and a transaction your wallet should not sign is never sent) → polls 
 confirmation → books the **actual settled balances** from the confirmed
 transaction rather than the quote's estimate.
 
-The bankroll is the wallet. At the start of every cycle the bot reads the
-wallet's balance from the chain and sizes against that, minus a SOL fee reserve
-it never spends — `risk.starting_cash_usd` is only a placeholder until that
-first read.
+**The bankroll is the wallet, and only the wallet.** There is no starting-cash
+setting: at the start of every cycle the bot reads the balance from the chain
+and sizes against that, minus a SOL fee reserve it never spends. Send more SOL
+in and it trades bigger; take some out and it trades smaller. Before the first
+successful read it has nothing to spend, which is the safe direction to be
+wrong in.
 
 **Run live trading on your own machine, not on Vercel or GitHub Actions.** A
 wallet key in a cloud environment variable is a wallet key you have handed to a
@@ -348,7 +351,9 @@ Worth tuning first:
 
 | Setting | Default | Why you would change it |
 | --- | --- | --- |
-| `strategy.min_score` | `0.55` | The main dial. Raise for fewer, higher-conviction entries; lower to trade more. |
+| `strategy.min_score` | `0.62` | The main dial. Raise for fewer, higher-conviction entries; lower to trade more. |
+| `data.search_terms` | 20 terms | How wide the net is. Each term is one request returning ~30 pairs. |
+| `data.max_candidates` | `400` | How many pairs a cycle scores. |
 | `risk.position_size_pct` | `0.08` | Fraction of equity per position. |
 | `risk.stop_loss_pct` | `0.20` | Too tight and you get stopped out of every winner. |
 | `filters.min_liquidity_usd` | `25000` | The single most effective rug filter. |

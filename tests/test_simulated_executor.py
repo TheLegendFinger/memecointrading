@@ -32,7 +32,7 @@ def test_buy_fill_pays_above_reference_and_charges_fees(executor):
     expected_fee = 100.0 * 0.0025 + 0.05 + 0.35
     assert fill.fee_usd == pytest.approx(expected_fee)
     assert fill.cash_delta == pytest.approx(-(100.0 + expected_fee))
-    assert fill.tx_signature.startswith("paper-")
+    assert fill.tx_signature.startswith("sim-")
 
 
 def test_sell_fill_receives_below_reference(executor):

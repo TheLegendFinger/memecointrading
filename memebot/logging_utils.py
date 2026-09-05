@@ -39,6 +39,12 @@ def setup_logging(level: str = "INFO", log_file: Optional[str] = None,
     root.setLevel(getattr(logging, str(level).upper(), logging.INFO))
     for handler in list(root.handlers):
         root.removeHandler(handler)
+        # Close it too: the menu reconfigures logging on every run, and simply
+        # dropping the handler leaks the log file's handle each time.
+        try:
+            handler.close()
+        except Exception:  # noqa: BLE001 - closing must never be fatal
+            pass
 
     if console:
         stream = logging.StreamHandler(sys.stderr)

@@ -226,6 +226,7 @@ def _run_checks(
             use_boosted_feed=config.data.use_boosted_feed,
             use_token_profiles=config.data.use_token_profiles,
             max_candidates=config.data.max_candidates,
+            feed_limit=config.data.feed_limit,
         )
         if not candidates:
             return FAIL, "discovery returned no pairs at all"

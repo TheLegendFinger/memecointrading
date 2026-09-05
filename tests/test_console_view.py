@@ -145,3 +145,24 @@ def test_a_broken_display_never_stops_the_bot(config):
                            on_cycle=explode)
     report = engine.run_cycle()  # must not raise
     assert report.scanned == 0
+
+
+def test_reconfiguring_logging_does_not_leak_the_log_file(tmp_path):
+    """The menu reconfigures logging every run; handles must not pile up."""
+    import logging
+
+    from memebot.logging_utils import setup_logging
+
+    log_file = str(tmp_path / "memebot.log")
+    opened = []
+    for _ in range(5):
+        setup_logging("INFO", log_file, console=False)
+        opened.append([h for h in logging.getLogger().handlers
+                       if isinstance(h, logging.FileHandler)])
+
+    assert all(len(handlers) == 1 for handlers in opened), "one file handler at a time"
+    # A closed FileHandler drops its stream, so either state means "not leaked".
+    assert all(h.stream is None or h.stream.closed
+               for batch in opened[:-1] for h in batch), \
+        "the previous run's file handle should be closed"
+    setup_logging("INFO", None)

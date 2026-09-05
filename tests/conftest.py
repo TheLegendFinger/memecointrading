@@ -82,7 +82,8 @@ class FakeDexScreener:
 
     # DexScreenerClient API surface used by the engine
     def discover(self, search_terms: Iterable[str], use_boosted_feed: bool = True,
-                 use_token_profiles: bool = True, max_candidates: int = 120) -> List[PairSnapshot]:
+                 use_token_profiles: bool = True, max_candidates: int = 400,
+                 feed_limit: int = 120) -> List[PairSnapshot]:
         self.discover_calls += 1
         return list(self.pairs.values())[:max_candidates]
 
@@ -96,6 +97,13 @@ class FakeDexScreener:
     def pairs_for_token(self, token_address: str) -> List[PairSnapshot]:
         pair = self.pairs.get(token_address)
         return [pair] if pair else []
+
+
+def fund(portfolio, usd: float = 1_000.0):
+    """Give a portfolio a balance, the way the wallet sync does in production."""
+    portfolio.set_cash(usd)
+    portfolio.set_starting_cash(usd)
+    return portfolio
 
 
 @pytest.fixture(autouse=True)
@@ -124,7 +132,6 @@ def storage() -> Storage:
 def config() -> BotConfig:
     cfg = BotConfig()
     cfg.state_db = ":memory:"
-    cfg.risk.starting_cash_usd = 1_000.0
     return cfg
 
 

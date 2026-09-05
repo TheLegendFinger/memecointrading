@@ -84,7 +84,7 @@ class TradingEngine:
             rate_limit_per_minute=config.data.jupiter_rate_limit_per_minute,
         )
         self.executor = executor or build_executor(config, data=self.data, jupiter=self.jupiter)
-        self.portfolio = portfolio or Portfolio(self.storage, config.risk.starting_cash_usd)
+        self.portfolio = portfolio or Portfolio(self.storage)
         self.risk = RiskManager(config.risk)
         self.filter = CandidateFilter(config.filters)
         self.strategy = build_strategy(config.strategy.name, config.strategy)
@@ -149,7 +149,7 @@ class TradingEngine:
         self.portfolio.set_cash(cash)
 
         # First cycle: anchor the return baseline to what the wallet actually
-        # held, rather than to the configured `starting_cash_usd`.
+        # held. Nothing is configured; this is where the number comes from.
         if not self.storage.get_state("live_baseline_set"):
             self.portfolio.set_starting_cash(self.portfolio.equity)
             self.storage.set_state("live_baseline_set", True)
@@ -305,6 +305,7 @@ class TradingEngine:
                 use_boosted_feed=self.config.data.use_boosted_feed,
                 use_token_profiles=self.config.data.use_token_profiles,
                 max_candidates=self.config.data.max_candidates,
+                feed_limit=self.config.data.feed_limit,
             )
         except Exception as exc:  # pragma: no cover - network dependent
             log.error("Discovery failed: %s", exc)

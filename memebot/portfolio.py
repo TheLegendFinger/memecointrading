@@ -73,6 +73,17 @@ class Portfolio:
     def _persist_cash(self) -> None:
         self.storage.set_state(CASH_KEY, self.cash)
 
+    def set_cash(self, value: float) -> None:
+        """Overwrite the cash balance - used in live mode, where the wallet's
+        on-chain balance is the truth rather than our own running total."""
+        self.cash = max(0.0, float(value))
+        self._persist_cash()
+
+    def set_starting_cash(self, value: float) -> None:
+        """Re-anchor the return baseline (live mode, first run)."""
+        self.starting_cash = float(value)
+        self.storage.set_state(START_KEY, self.starting_cash)
+
     def apply_fill(self, fill: Fill) -> float:
         """Apply a fill, returning the realized P&L it produced (0 for buys)."""
         if not fill.ok:

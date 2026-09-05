@@ -104,8 +104,10 @@ def test_unarmed_executor_refuses_to_trade(monkeypatch):
 
 
 def test_underfunded_wallet_blocks_trading(monkeypatch):
-    executor = make_executor(monkeypatch, rpc=FakeRpc(lamports=1_000))
-    assert "top it up" in executor.preflight()
+    # Below the fee reserve: it could not pay for the swap it is about to send.
+    executor = make_executor(monkeypatch, rpc=FakeRpc(lamports=1_000_000))  # 0.001 SOL
+    problem = executor.preflight()
+    assert "fee reserve" in problem and "Send it more SOL" in problem
     assert not executor.execute(buy_order()).ok
 
 

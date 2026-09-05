@@ -1,0 +1,86 @@
+# Live trading configuration, tuned for a SMALL real wallet (~$50-200).
+#
+#   copy this to config.live.yaml and edit, then:
+#   powershell -ExecutionPolicy Bypass -File scripts\live.ps1
+#
+# scripts\live.ps1 prefers config.live.yaml when it exists, so your paper
+# settings in config.yaml stay untouched.
+#
+# Every number here is deliberately more conservative than the paper defaults:
+# real fills cost more, failed swaps cost fees, and there is no undo.
+
+mode: live
+poll_interval_seconds: 45        # fewer API calls; memecoin moves last minutes
+state_db: data/memebot-live.sqlite3   # keep live history separate from paper
+log_file: logs/memebot-live.log
+log_level: INFO
+
+data:
+  chain: solana
+  search_terms: ["SOL", "WSOL", "pump", "bonk"]
+  use_boosted_feed: true
+  use_token_profiles: true
+  max_candidates: 120
+
+filters:
+  # Stricter than paper. With real money, being able to EXIT matters more
+  # than finding more candidates.
+  min_liquidity_usd: 50000       # you must be able to sell what you buy
+  max_liquidity_usd: 5000000
+  min_volume_h1_usd: 40000
+  min_volume_h24_usd: 250000
+  min_age_minutes: 30            # skip the first, most manipulated minutes
+  max_age_minutes: 20160
+  max_fdv_usd: 30000000
+  min_trades_h1: 100
+  min_buy_ratio_h1: 0.48
+  min_liquidity_to_fdv: 0.02     # rug guard, tighter than paper
+  max_price_change_h1_pct: 200   # do not buy the top of a vertical move
+  max_price_change_h24_pct: 800
+  blacklist_mints: []
+  blacklist_symbols: []
+
+strategy:
+  name: momentum
+  min_score: 0.62                # pickier than paper's 0.55
+  max_new_positions_per_cycle: 1 # one entry per cycle, no piling in
+
+risk:
+  # starting_cash_usd is IGNORED in live mode - the wallet balance is the
+  # bankroll, read from the chain at the start of every cycle.
+  starting_cash_usd: 100
+
+  max_open_positions: 3
+  position_size_pct: 0.20        # 20% of a small bankroll per position
+  min_position_usd: 5            # below this a swap's fees eat the trade
+  max_position_usd: 25           # hard ceiling per position - raise slowly
+  max_position_pct_of_liquidity: 0.002   # never be more than 0.2% of the pool
+  cash_reserve_pct: 0.10
+
+  stop_loss_pct: 0.25            # wider than paper: real fills need room
+  take_profit_pct: 0.50
+  trailing_stop_pct: 0.20
+  trailing_arm_profit_pct: 0.25
+  max_hold_minutes: 360          # 6 hours
+  liquidity_drain_pct: 0.4       # exit earlier than paper on a draining pool
+  stale_price_exit_minutes: 20
+
+  max_daily_loss_pct: 0.20       # stop trading for the day after -20%
+  max_drawdown_pct: 0.35         # stop entirely after -35% from the peak
+  cooldown_minutes_after_loss: 45
+  reentry_cooldown_minutes: 180
+
+execution:
+  slippage_bps: 200              # 2%: memecoin swaps revert below this
+  fee_bps: 25
+  # A higher priority fee lands more transactions when the network is busy.
+  # 0.0003 SOL-ish per swap at 300k microlamports.
+  priority_fee_microlamports: 300000
+  compute_unit_limit: 300000
+  max_tx_retries: 3
+  confirm_timeout_seconds: 90
+  # SOL held back for fees and token-account rent, never traded.
+  sol_fee_reserve: 0.025
+  # Trade against SOL. Change to the USDC mint to hold stables between trades.
+  quote_mint: So11111111111111111111111111111111111111112
+  rpc_url: https://api.mainnet-beta.solana.com

@@ -212,6 +212,7 @@ curl -X POST "https://your-app.vercel.app/api/cycle?key=YOUR_CRON_SECRET"
 | Command | What it does |
 | --- | --- |
 | `doctor` | Check every API, the database, and the candidate funnel. Start here. |
+| `wallet` | Create or inspect the live trading wallet: address, balance, position size. |
 | `run` | The trading loop. `--cycles N` to stop after N passes, `--interval S` for the cadence. |
 | `once` | A single cycle, then exit. Good for cron. |
 | `scan` | Score the live market and print the table — never trades. |
@@ -277,26 +278,35 @@ reproducible runs.
 
 ## Going live
 
-> Real money. Memecoins go to zero routinely, and a bot will find the ones that
-> do faster than you will. Use a burner wallet funded with an amount you are
-> prepared to lose entirely, and watch the first sessions.
+**[LIVE_TRADING.md](LIVE_TRADING.md) is the full step-by-step** — wallet
+creation, funding, and the first run, written for Windows PowerShell. The short
+version:
 
-1. Install the Solana extras: `pip install -r requirements-live.txt`
-2. Put a wallet key in `.env` — either `SOLANA_PRIVATE_KEY` (base58) or
-   `SOLANA_KEYPAIR_PATH` (a Solana CLI JSON keypair). Fund it with SOL.
-3. Arm the interlock — separate from the config on purpose:
-   `LIVE_TRADING_CONFIRM=I_UNDERSTAND_THE_RISK`
-4. Use a private RPC; the public endpoint drops transactions under load:
-   `MEMEBOT_RPC_URL=https://mainnet.helius-rpc.com/?api-key=...`
-5. `python -m memebot doctor --mode live` — it verifies the key, the balance and
-   the RPC before you risk anything.
-6. `python -m memebot run --mode live --config config.yaml`. The CLI prints the
-   wallet, the RPC and the size limits, then asks you to type `trade`.
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\wallet.ps1 -New -Save   # create a burner
+powershell -ExecutionPolicy Bypass -File scripts\wallet.ps1              # check it is funded
+powershell -ExecutionPolicy Bypass -File scripts\live.ps1                # trade for real
+```
+
+`live.ps1` installs the Solana packages, creates `config.live.yaml` from the
+small-wallet template, shows the wallet and the market feeds, and makes you type
+`LIVE` before anything trades. It arms the interlock **for that window only** —
+nothing written to disk can trade for real, so no other command can start live
+trading by accident.
+
+> Real money. Memecoins go to zero routinely, and a bot will find the ones that
+> do faster than you will. Use a burner funded with an amount you are prepared
+> to lose entirely, and watch the first sessions.
 
 Per order, live mode requests a Jupiter route → rejects it if price impact
 exceeds tolerance → builds the swap → signs locally (your key never leaves the
-machine) → sends it → polls to confirmation → books the **actual settled
-balances** from the confirmed transaction rather than the quote's estimate.
+machine, and a transaction your wallet should not sign is never sent) → polls to
+confirmation → books the **actual settled balances** from the confirmed
+transaction rather than the quote's estimate.
+
+The bankroll is the wallet. At the start of every live cycle the bot reads the
+wallet's balance from the chain and sizes against that, minus a SOL fee reserve
+it never spends — `risk.starting_cash_usd` is a paper-only number.
 
 **Run live trading on your own machine, not on Vercel or GitHub Actions.** A
 wallet key in a cloud environment variable is a wallet key you have handed to a
@@ -326,7 +336,7 @@ If `doctor` reports plenty of pairs but nothing tradable, loosen
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest -q          # 191 tests, no network access required
+python -m pytest -q          # 205 tests, no network access required
 ```
 
 The suite fakes DexScreener, Jupiter, the Solana RPC and Postgres, so it runs
@@ -334,7 +344,10 @@ offline and deterministically. It covers the fill model, portfolio accounting
 (including partial exits and cost basis), every risk rule, the filters, the
 scoring model, full engine cycles, the serverless handlers (including that
 `/api/cycle` fails closed without a secret), the storage dialects, and the live
-executor's safety envelope.
+executor's safety envelope. With the live extras installed, a further set signs
+real transactions with real solders cryptography and asserts they verify, that
+the message Jupiter built is unchanged, and that a transaction the wallet should
+not sign is never broadcast.
 
 ```
 memebot/
@@ -346,6 +359,7 @@ memebot/
   risk.py          sizing, entry gates, circuit breakers, exit rules
   engine.py        the cycle
   doctor.py        dependency and configuration diagnostics
+  wallet.py        burner wallet creation and inspection
   cli.py           command line interface
   data/            dexscreener.py (discovery/prices), jupiter.py (routing)
   execution/       base.py (interface), paper.py (simulator), live.py (Jupiter)

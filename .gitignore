@@ -22,7 +22,9 @@ htmlcov/
 /data/
 /logs/
 config.yaml
+config.live.yaml
 config.json
 !config.example.yaml
+!config.live.example.yaml
 keypair.json
 *.key

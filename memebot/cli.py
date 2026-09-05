@@ -138,6 +138,97 @@ def cmd_scan(args: argparse.Namespace, config: BotConfig) -> int:
     return 0
 
 
+def cmd_wallet(args: argparse.Namespace, config: BotConfig) -> int:
+    """Create a wallet, or show the configured one and its balance."""
+    from .wallet import (
+        WalletError, address_from_secret, append_to_env, configured_address, create_keypair,
+    )
+
+    if args.new:
+        try:
+            address, secret = create_keypair()
+        except WalletError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+        print("\n  New Solana wallet created.\n")
+        print(f"  Address     {address}")
+        print(f"  Private key {secret}")
+        print("\n  " + "!" * 68)
+        print("  This private key is shown ONCE and controls every token in the wallet.")
+        print("  Save it somewhere safe. Anyone who has it can drain the wallet.")
+        print("  " + "!" * 68)
+
+        if args.save:
+            try:
+                append_to_env({"SOLANA_PRIVATE_KEY": secret})
+            except WalletError as exc:
+                print(f"\n  Not saved: {exc}")
+                return 1
+            print("\n  Saved to .env (which is gitignored - keep it that way).")
+        else:
+            print("\n  To use it, add this line to your .env file:")
+            print(f"    SOLANA_PRIVATE_KEY={secret}")
+            print("  ...or re-run with --save to have it written for you.")
+
+        print(f"\n  Then fund it: send SOL to {address}")
+        print("  Start with a small amount you are willing to lose entirely.\n")
+        return 0
+
+    # ---- show the configured wallet ----
+    try:
+        address = configured_address()
+    except WalletError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    if not address:
+        print("\nNo wallet configured.")
+        print("  Create one : python -m memebot wallet --new --save")
+        print("  Or set SOLANA_PRIVATE_KEY (base58) / SOLANA_KEYPAIR_PATH in .env\n")
+        return 1
+
+    print(f"\n  Address   {address}")
+    print(f"  Explorer  https://solscan.io/account/{address}")
+
+    from .execution.live import LiveExecutor
+
+    executor = LiveExecutor(config)
+    try:
+        summary = executor.wallet_summary()
+    except Exception as exc:  # noqa: BLE001 - a balance lookup failure is informational
+        print(f"  Balance   could not be read: {exc}\n")
+        return 1
+
+    sol = summary["sol_balance"]
+    print(f"  RPC       {summary['rpc_url']}")
+    print(f"\n  SOL       {sol:.6f}" + (f"  ({_money(summary['sol_value_usd'])})"
+                                        if summary.get("sol_value_usd") else ""))
+    if "quote_balance" in summary:
+        print(f"  Quote     {summary['quote_balance']:,.4f} of {summary['quote_mint'][:6]}...")
+
+    available = summary.get("available_cash_usd")
+    if available is not None:
+        print(f"  Tradable  {_money(available)}  "
+              f"(after a {summary['fee_reserve_sol']:.3f} SOL fee reserve)")
+        size = min(config.risk.max_position_usd, available * config.risk.position_size_pct)
+        if available <= 0:
+            print("\n  Not enough SOL to trade. Send some to the address above.")
+        elif size < config.risk.min_position_usd:
+            print(f"\n  Too small to trade: a position would be {_money(size)}, below the "
+                  f"{_money(config.risk.min_position_usd)} minimum.")
+            print("  Add more SOL, or lower risk.min_position_usd in your config.")
+        else:
+            print(f"\n  At the current settings each position would be about {_money(size)}, "
+                  f"up to {config.risk.max_open_positions} at once.")
+
+    armed = summary.get("armed")
+    print(f"\n  Live trading {'ARMED' if armed else 'not armed'}"
+          + ("" if armed else " (set LIVE_TRADING_CONFIRM in .env to enable)"))
+    print()
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace, config: BotConfig) -> int:
     """Check every dependency and say whether the bot can actually trade."""
     from .doctor import FAIL, format_report, run_checks
@@ -295,6 +386,12 @@ def build_parser() -> argparse.ArgumentParser:
     scan = sub.add_parser("scan", help="show scored candidates without trading")
     scan.add_argument("--limit", type=int, default=20)
     scan.set_defaults(func=cmd_scan)
+
+    wallet = sub.add_parser("wallet", help="create or inspect the live trading wallet")
+    wallet.add_argument("--new", action="store_true", help="generate a new wallet")
+    wallet.add_argument("--save", action="store_true",
+                        help="with --new, write the key to .env (never overwrites)")
+    wallet.set_defaults(func=cmd_wallet)
 
     doctor = sub.add_parser("doctor", help="check API connectivity and configuration")
     doctor.add_argument("--quick", action="store_true",

@@ -139,6 +139,9 @@ class ExecutionConfig:
     paper_random_seed: object = None
     # Live only:
     rpc_url: str = "https://api.mainnet-beta.solana.com"
+    # SOL held back from trading to pay network fees and token-account rent.
+    # Roughly 0.002 SOL per new token account plus fees, so this covers ~10 buys.
+    sol_fee_reserve: float = 0.025
     priority_fee_microlamports: int = 200_000
     compute_unit_limit: int = 300_000
     max_tx_retries: int = 3

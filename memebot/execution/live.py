@@ -89,6 +89,20 @@ class SolanaRpc:
         result = self.call("getBalance", [pubkey, {"commitment": "confirmed"}])
         return int((result or {}).get("value") or 0)
 
+    def get_token_balance(self, owner: str, mint: str) -> float:
+        """Total UI balance of one SPL mint across the owner's token accounts."""
+        result = self.call(
+            "getTokenAccountsByOwner",
+            [owner, {"mint": mint}, {"encoding": "jsonParsed", "commitment": "confirmed"}],
+        )
+        total = 0.0
+        for account in (result or {}).get("value") or []:
+            info = (((account.get("account") or {}).get("data") or {}).get("parsed") or {}).get("info") or {}
+            amount = (info.get("tokenAmount") or {}).get("uiAmount")
+            if amount:
+                total += float(amount)
+        return total
+
     def get_latest_blockhash(self) -> Dict[str, Any]:
         result = self.call("getLatestBlockhash", [{"commitment": "confirmed"}])
         return (result or {}).get("value") or {}
@@ -164,10 +178,13 @@ class LiveExecutor(Executor):
             lamports = self.rpc.get_balance_lamports(self._pubkey)
         except HttpError as exc:
             return f"cannot reach RPC {self.cfg.rpc_url}: {exc}"
-        if lamports < 5_000_000:  # 0.005 SOL
+
+        sol = lamports / LAMPORTS_PER_SOL
+        if sol < self.cfg.sol_fee_reserve:
             return (
-                f"wallet {self._pubkey} holds only {lamports / LAMPORTS_PER_SOL:.4f} SOL - "
-                "top it up to cover network and priority fees"
+                f"wallet {self._pubkey} holds {sol:.4f} SOL, below the "
+                f"{self.cfg.sol_fee_reserve:.3f} SOL fee reserve - it cannot pay for a swap. "
+                "Send it more SOL."
             )
         return None
 
@@ -193,12 +210,70 @@ class LiveExecutor(Executor):
             price = self.data.price_usd(self.cfg.quote_mint)
         return price
 
+    def sol_balance(self) -> float:
+        return self.rpc.get_balance_lamports(self.wallet_address) / LAMPORTS_PER_SOL
+
+    def available_cash_usd(self) -> Optional[float]:
+        """What the wallet can actually spend on the next trade, in USD.
+
+        In live mode this - not a number in a config file - is the bankroll.
+        The fee reserve is held back so the wallet can always afford the
+        network fees and token-account rent that a swap needs, and so a losing
+        run cannot leave the wallet unable to sell what it holds.
+        """
+        try:
+            quote_mint = self.cfg.quote_mint
+            price = self._quote_price_usd()
+            if price <= 0:
+                return None
+
+            if quote_mint == WSOL_MINT:
+                spendable = max(0.0, self.sol_balance() - self.cfg.sol_fee_reserve)
+                return spendable * price
+
+            # Trading against a token (USDC): its balance is the bankroll, but
+            # the wallet still needs SOL for fees.
+            if self.sol_balance() < self.cfg.sol_fee_reserve:
+                return 0.0
+            return self.rpc.get_token_balance(self.wallet_address, quote_mint) * price
+        except (HttpError, LiveExecutionError) as exc:
+            log.warning("Could not read the wallet balance: %s", exc)
+            return None
+
+    def wallet_summary(self) -> Dict[str, Any]:
+        """Everything the `wallet` command shows. Never includes the secret."""
+        summary: Dict[str, Any] = {
+            "address": self.wallet_address,
+            "rpc_url": self.cfg.rpc_url,
+            "quote_mint": self.cfg.quote_mint,
+            "armed": os.environ.get(CONFIRM_ENV, "") == CONFIRM_VALUE,
+        }
+        summary["sol_balance"] = self.sol_balance()
+        summary["sol_price_usd"] = self.jupiter.price(WSOL_MINT)
+        summary["sol_value_usd"] = summary["sol_balance"] * (summary["sol_price_usd"] or 0.0)
+        summary["fee_reserve_sol"] = self.cfg.sol_fee_reserve
+        summary["available_cash_usd"] = self.available_cash_usd()
+        if self.cfg.quote_mint != WSOL_MINT:
+            summary["quote_balance"] = self.rpc.get_token_balance(
+                self.wallet_address, self.cfg.quote_mint
+            )
+        return summary
+
     def _sign_and_send(self, swap_tx_b64: str) -> str:
         from solders.transaction import VersionedTransaction  # type: ignore
 
         keypair = self._ensure_wallet()
         raw = VersionedTransaction.from_bytes(base64.b64decode(swap_tx_b64))
-        signed = VersionedTransaction(raw.message, [keypair])
+        try:
+            signed = VersionedTransaction(raw.message, [keypair])
+        except Exception as exc:
+            # solders refuses to sign when our key is not the transaction's
+            # expected signer - which would mean the quote was built for a
+            # different wallet. Fail clearly rather than sending junk.
+            raise LiveExecutionError(
+                f"refusing to send: this wallet ({self._pubkey}) is not the signer the "
+                f"swap transaction expects ({exc})"
+            ) from exc
         payload = base64.b64encode(bytes(signed)).decode("utf-8")
         return self.rpc.send_raw_transaction(payload, max_retries=self.cfg.max_tx_retries)
 

@@ -32,3 +32,9 @@ class Executor(ABC):
     def preflight(self) -> Optional[str]:
         """Return an error string if the executor is not ready to trade."""
         return None
+
+    def available_cash_usd(self) -> Optional[float]:
+        """Spendable quote currency, in USD, for executors backed by a real
+        wallet. None means "the portfolio's own bookkeeping is the truth",
+        which is the paper case."""
+        return None

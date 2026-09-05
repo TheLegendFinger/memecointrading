@@ -109,6 +109,37 @@ class TradingEngine:
     def preflight(self) -> Optional[str]:
         return self.executor.preflight()
 
+    # ---- live balance ----------------------------------------------------------
+    def sync_live_balance(self) -> Optional[float]:
+        """In live mode, replace our bookkeeping cash with the wallet's balance.
+
+        Paper mode keeps a running cash figure because nothing external can
+        change it. A real wallet can: you might send SOL in or out, a swap can
+        land after we gave up waiting, fees accrue. Reading the chain at the top
+        of every cycle keeps position sizing honest - the bot can never size a
+        trade against money that is not there.
+        """
+        if self.config.mode != Mode.LIVE.value:
+            return None
+
+        cash = self.executor.available_cash_usd()
+        if cash is None:
+            log.warning("Could not read the wallet balance; keeping the last known cash figure")
+            return None
+
+        previous = self.portfolio.cash
+        self.portfolio.set_cash(cash)
+
+        # First live cycle: anchor the return baseline to what the wallet
+        # actually held, not to the paper `starting_cash_usd`.
+        if not self.storage.get_state("live_baseline_set"):
+            self.portfolio.set_starting_cash(self.portfolio.equity)
+            self.storage.set_state("live_baseline_set", True)
+            log.info("Live baseline set at $%.2f", self.portfolio.equity)
+        elif abs(cash - previous) > max(1.0, previous * 0.02):
+            log.info("Wallet cash moved $%.2f -> $%.2f since the last cycle", previous, cash)
+        return cash
+
     # ---- position maintenance --------------------------------------------------
     def _refresh_positions(self) -> Dict[str, PairSnapshot]:
         """Pull fresh pair data for everything we hold, and mark the book."""
@@ -260,6 +291,7 @@ class TradingEngine:
         report = CycleReport()
         self.cycles += 1
 
+        self.sync_live_balance()
         self.manage_positions(report)
 
         halted, reason = self.risk.should_halt(self.portfolio)

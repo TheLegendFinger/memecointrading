@@ -53,6 +53,19 @@ filters:
   blacklist_mints: []
   blacklist_symbols: []
 
+safety:
+  # Checks on the token itself, read from the chain before it is bought.
+  # The market data everything else uses cannot see either of these.
+  enabled: true
+  require_mint_authority_revoked: true   # else they can print more supply
+  require_freeze_authority_revoked: true # else they can stop you selling
+  # Share of supply, ignoring the pool's own account. 0 turns a check off.
+  max_single_holder_pct: 0.15
+  max_top10_holder_pct: 0.40
+  # If the chain cannot be read, buy anyway? No: unchecked is treated as failed.
+  allow_unverified: false
+  cache_seconds: 600
+
 strategy:
   name: momentum
   # The main dial. Roughly what the score means:

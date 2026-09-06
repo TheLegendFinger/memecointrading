@@ -135,8 +135,20 @@ def cmd_scan(args: argparse.Namespace, config: BotConfig) -> int:
     if result.rejections:
         print(f"Rejections: {result.summary()}")
 
+    # The on-chain check costs three RPC calls a token, so only the ones that
+    # would actually be bought are looked up - the rest show "-".
+    verdicts = {}
+    if engine.safety is not None and not args.no_safety:
+        for score, pair in scored[: args.limit]:
+            if score < config.strategy.min_score:
+                continue
+            if len(verdicts) >= args.safety_limit:
+                break
+            verdicts[pair.base.address] = engine.safety.check(pair)
+
     rows = []
     for score, pair in scored[: args.limit]:
+        verdict = verdicts.get(pair.base.address)
         rows.append([
             pair.base.symbol[:12] or pair.base.address[:6],
             f"{score:.3f}",
@@ -148,12 +160,18 @@ def cmd_scan(args: argparse.Namespace, config: BotConfig) -> int:
             f"{pair.buy_ratio('h1') * 100:.0f}%",
             f"{pair.age_minutes / 60:.1f}h" if pair.age_minutes < 1e9 else "?",
             pair.source or "-",
+            verdict.badge if verdict else "-",
         ])
     print()
     print(_table(rows, ["SYMBOL", "SCORE", "PRICE", "5M", "1H", "LIQ", "VOL1H", "BUY%",
-                        "AGE", "FOUND BY"]))
+                        "AGE", "FOUND BY", "CHAIN"]))
+    for pair_address, verdict in verdicts.items():
+        if not verdict.ok:
+            print(f"  ! {pair_address[:8]}... {verdict.summary}")
     tradable = [s for s, _ in scored if s >= config.strategy.min_score]
-    print(f"\n{len(tradable)} candidate(s) at or above the {config.strategy.min_score:.2f} entry threshold.")
+    blocked = sum(1 for v in verdicts.values() if not v.ok)
+    print(f"\n{len(tradable)} candidate(s) at or above the {config.strategy.min_score:.2f} entry threshold."
+          + (f" {blocked} of them would be refused on-chain." if blocked else ""))
     return 0
 
 
@@ -615,6 +633,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     scan = sub.add_parser("scan", help="show scored candidates without trading")
     scan.add_argument("--limit", type=int, default=20)
+    scan.add_argument("--no-safety", action="store_true",
+                      help="skip the on-chain checks (they cost RPC calls)")
+    scan.add_argument("--safety-limit", type=int, default=10,
+                      help="how many candidates to check on-chain")
     scan.set_defaults(func=cmd_scan)
 
     wallet = sub.add_parser("wallet", help="create, inspect, back up or empty the wallet")

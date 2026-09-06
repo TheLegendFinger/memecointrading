@@ -50,11 +50,29 @@ class FakeJupiter:
 
 
 class FakeRpc:
-    def __init__(self, lamports=1_000_000_000, status=None, tx=None):
+    def __init__(self, lamports=1_000_000_000, status=None, tx=None, mint_info=None,
+                 supply=1_000_000.0, holders=None):
         self.lamports = lamports
         self.status = status if status is not None else {"confirmationStatus": "confirmed", "err": None}
         self.tx = tx
         self.sent = []
+        # A clean token by default: both authorities revoked, supply spread out.
+        self.mint_info = mint_info if mint_info is not None else {
+            "mintAuthority": None, "freezeAuthority": None, "decimals": 6,
+        }
+        self.supply = supply
+        self.holders = holders if holders is not None else [
+            10_000.0, 8_000.0, 6_000.0, 5_000.0, 4_000.0,
+        ]
+
+    def get_mint_account(self, mint):
+        return self.mint_info
+
+    def get_token_supply(self, mint):
+        return self.supply
+
+    def get_token_largest_accounts(self, mint):
+        return list(self.holders)
 
     def get_balance_lamports(self, pubkey):
         return self.lamports

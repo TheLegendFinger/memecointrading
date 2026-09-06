@@ -37,7 +37,7 @@ time, then opens a menu — everything is a number:
 ```
   ╋╋╋╋╋╋╋╋╋╋┏┓╋╋┏┓
   ┏━━┳━┳━━┳━┫┗┳━┫┗┓
-  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.3.0
+  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.4.0
   ┗┻┻┻━┻┻┻┻━┻━┻━┻━┛   LIVE - real money
 
    $1,043.18 · $812.40 cash · 2 open · +4.32%
@@ -259,10 +259,13 @@ phone. Locally, `python scripts/dev_server.py` serves it if you want it.
         [4] risk sizing  ───────────────► position size = min(equity %, max $,
                     │                     free cash, 0.5% of pool liquidity)
                     ▼
-        [5] execute the swap through Jupiter
+        [5] on-chain check ─────────────► refused (mint authority live, freeze
+                    │                     authority live, holders concentrated)
+                    ▼
+        [6] execute the swap through Jupiter
                     │
                     ▼
-        [6] manage open positions every cycle:
+        [7] manage open positions every cycle:
             stop loss · trailing stop · take profit · time stop ·
             liquidity-drain exit · stale-data exit · momentum reversal
 ```
@@ -298,6 +301,37 @@ only ever contributes *names to look at*, never a number the bot trades on.
 `scan` shows which feed found each coin in its `FOUND BY` column, and `doctor`
 prints the per-feed breakdown. If everything says `search`, the pool feeds are
 unreachable and discovery has quietly narrowed to name matching.
+
+### What the on-chain check looks at
+
+Steps [1]–[4] read the *market*: price, volume, who is buying. None of that can
+see the two setups that empty a wallet fastest, because both live on the
+token's mint account rather than in its chart. Step [5] reads the chain through
+the same RPC the bot trades with, for the one coin it is about to buy:
+
+| Check | Why it matters |
+| --- | --- |
+| **mint authority** revoked | If it is still live, whoever deployed the token can print more supply whenever they like and dilute you to nothing in a single transaction. |
+| **freeze authority** revoked | If it is still live, they can freeze your token account. You hold the coin and can never sell it — the chart looks perfect right up to the moment you try to exit. |
+| **holder concentration** | The largest account, and the largest ten, as a share of supply. If ten accounts hold most of it, the exit is theirs and not yours. |
+
+The pool's own account is excluded from the concentration numbers — a
+constant-product pool holds most of the supply by design, and counting it as a
+whale makes every healthy token look captured. It is recognised by size:
+DexScreener reports total pool liquidity, so one side is about half of it.
+
+Three RPC calls per token, cached for ten minutes, and only for a coin actually
+about to be bought — not for all four hundred in a scan. If the chain cannot be
+read, the token is treated as having **failed**, not passed
+(`safety.allow_unverified` if you disagree). `scan` shows the verdict in its
+`CHAIN` column for the candidates above your entry threshold.
+
+**What this is not.** It is not a full rug scanner, and passing it does not mean
+a coin is safe. It cannot see whether the LP is locked or burned — finding the
+LP mint reliably needs per-DEX pool layouts. It reads token *accounts*, not
+owners, so one person spread across five accounts reads as five holders: it
+undercounts concentration, though it never invents it. And nothing here can
+tell you whether the team will simply sell.
 
 ## What an order actually does
 
@@ -397,6 +431,8 @@ Worth tuning first:
 | `risk.position_size_pct` | `0.08` | Fraction of equity per position. |
 | `risk.stop_loss_pct` | `0.20` | Too tight and you get stopped out of every winner. |
 | `filters.min_liquidity_usd` | `25000` | The single most effective rug filter. |
+| `safety.max_top10_holder_pct` | `0.40` | Share of supply the ten biggest non-pool accounts may hold. |
+| `safety.allow_unverified` | `false` | Whether a token whose chain data could not be read is bought anyway. |
 | `filters.min_age_minutes` | `20` | Lower to catch launches earlier, at much higher risk. |
 | `execution.slippage_bps` | `150` | Too low and orders revert; too high and you get sandwiched. |
 

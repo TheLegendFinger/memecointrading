@@ -17,7 +17,7 @@ import logging
 import signal
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional
 
 from .config import BotConfig
 from .data import DexScreenerClient, build_dexscreener, discover_candidates
@@ -29,6 +29,9 @@ from .portfolio import Portfolio
 from .risk import RiskManager
 from .storage import Storage, open_storage
 from .strategy import CandidateFilter, build_strategy
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .safety import TokenSafetyChecker
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +65,7 @@ class TradingEngine:
         portfolio: Optional[Portfolio] = None,
         jupiter: Optional[JupiterClient] = None,
         on_cycle: Optional[Callable[["TradingEngine", CycleReport], None]] = None,
+        safety: Optional["TokenSafetyChecker"] = None,
     ) -> None:
         self.config = config
         self.storage = storage or open_storage(config.state_db)
@@ -79,6 +83,7 @@ class TradingEngine:
         self.portfolio = portfolio or Portfolio(self.storage)
         self.risk = RiskManager(config.risk)
         self.filter = CandidateFilter(config.filters)
+        self.safety = safety or self._build_safety_checker()
         self.strategy = build_strategy(config.strategy.name, config.strategy)
 
         self._stop = False
@@ -308,10 +313,45 @@ class TradingEngine:
             if not allowed:
                 report.note_skip(reason)
                 continue
+            if not self._passes_safety(signal_obj, report):
+                continue
             before = len(report.opened)
             self._open_position(signal_obj, report)
             if len(report.opened) > before:
                 opened += 1
+
+    # ---- on-chain safety -------------------------------------------------------
+    def _build_safety_checker(self):
+        """Reuses the executor's RPC connection - same node, same credentials."""
+        if not self.config.safety.enabled:
+            return None
+        rpc = getattr(self.executor, "rpc", None)
+        if rpc is None:
+            log.debug("No RPC on the executor; on-chain safety checks are off.")
+            return None
+        from .safety import TokenSafetyChecker
+
+        return TokenSafetyChecker(rpc, self.config.safety)
+
+    def _passes_safety(self, signal_obj: Signal, report: CycleReport) -> bool:
+        """The last gate before money moves: can this token rug me mechanically?"""
+        if self.safety is None or signal_obj.pair is None:
+            return True
+        verdict = self.safety.check(signal_obj.pair)
+        if verdict.ok:
+            return True
+        symbol = signal_obj.token.symbol or signal_obj.token.address[:8]
+        report.note_skip("failed the on-chain safety check")
+        log.info("Skipping %s: %s", symbol, verdict.summary)
+        self.emit(
+            "safety",
+            f"Skipped {symbol} - {verdict.reasons[0] if verdict.reasons else 'unsafe'}",
+            symbol=symbol,
+            address=signal_obj.token.address,
+            level="warn",
+            detail=verdict.summary,
+        )
+        return False
 
     # ---- one cycle -------------------------------------------------------------
     def run_cycle(self) -> CycleReport:

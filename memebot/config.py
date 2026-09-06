@@ -102,6 +102,28 @@ class FilterConfig:
 
 
 @dataclass
+class SafetyConfig:
+    """On-chain checks on the token itself, run before it is bought.
+
+    Everything in FilterConfig reads the market. These read the chain, which is
+    the only place the mechanical rug setups are visible.
+    """
+
+    enabled: bool = True
+    # A mint whose authority is still live can print more supply at will.
+    require_mint_authority_revoked: bool = True
+    # A freeze authority can stop you selling what you hold.
+    require_freeze_authority_revoked: bool = True
+    # Share of supply, excluding the pool's own account. 0 disables the check.
+    max_single_holder_pct: float = 0.15
+    max_top10_holder_pct: float = 0.40
+    # If the chain cannot be read, is the coin bought anyway? Off: an unchecked
+    # token is treated as a failed check, because the failure mode is total.
+    allow_unverified: bool = False
+    cache_seconds: float = 600.0
+
+
+@dataclass
 class StrategyConfig:
     name: str = "momentum"
     # Minimum composite score (0..1) required to open a position.
@@ -176,6 +198,7 @@ class BotConfig:
     log_level: str = "INFO"
     data: DataConfig = field(default_factory=DataConfig)
     filters: FilterConfig = field(default_factory=FilterConfig)
+    safety: SafetyConfig = field(default_factory=SafetyConfig)
     strategy: StrategyConfig = field(default_factory=StrategyConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
@@ -201,6 +224,10 @@ class BotConfig:
             errors.append("execution.slippage_bps must be in [0, 5000]")
         if self.strategy.min_score < 0:
             errors.append("strategy.min_score must be >= 0")
+        for name in ("max_single_holder_pct", "max_top10_holder_pct"):
+            value = getattr(self.safety, name)
+            if not 0 <= value <= 1:
+                errors.append(f"safety.{name} must be a fraction in [0, 1]")
         if errors:
             raise ValueError("Invalid configuration:\n  - " + "\n  - ".join(errors))
 
@@ -371,6 +398,7 @@ LEGACY_EXAMPLE_FINGERPRINTS = {
     "0b419c4f22474a8eb5e7719ae86ca77c6e2df8ecf870383639112878fd77cb49",
     "0ed372b12dbc45abdf7e00781dba0abdace679bc44c4c83ee7400d2dad295693",
     "937ebaca630dc6889badccc7bf808b9bfdfbef9438f62d2653f9606d05fb4207",
+    "1022bd193340be32ec30ad9c9d95e6ed70ee19ae53fb462788ecc28429d788a3",
 }
 
 

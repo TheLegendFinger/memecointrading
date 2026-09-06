@@ -272,6 +272,36 @@ def _run_checks(
 
     report.run("candidate pipeline", check_pipeline)
 
+    # ---- the on-chain safety reader ----------------------------------------
+    if config.safety.enabled:
+        def check_safety_reader():
+            """Can the RPC answer the questions the safety check asks?
+
+            Probed against wrapped SOL, whose authorities are revoked and whose
+            supply is public - if that comes back wrong, the reader is broken
+            rather than the token.
+            """
+            from .execution import build_executor
+
+            executor = build_executor(config, data=data, jupiter=jupiter)
+            rpc = getattr(executor, "rpc", None)
+            if rpc is None:
+                return WARN, "no RPC - tokens will not be checked on-chain"
+            info = rpc.get_mint_account(WSOL_MINT)
+            if not info or "mintAuthority" not in info:
+                return FAIL, (
+                    f"{config.execution.rpc_url} did not return a parsed mint account - "
+                    "on-chain safety checks cannot run against it"
+                )
+            supply = rpc.get_token_supply(WSOL_MINT)
+            holders = rpc.get_token_largest_accounts(WSOL_MINT)
+            return OK, (
+                f"mint, supply and holders all readable "
+                f"(wSOL supply {supply:,.0f}, {len(holders)} largest accounts)"
+            )
+
+        report.run("on-chain safety reader", check_safety_reader)
+
     # ---- trading readiness -------------------------------------------------
     def check_execution():
         """Is this setup able to trade - wallet, RPC, funds?

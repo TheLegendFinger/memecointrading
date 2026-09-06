@@ -19,7 +19,7 @@ import json
 import logging
 import os
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import BotConfig
 from ..http import HttpClient, HttpError
@@ -117,6 +117,40 @@ class SolanaRpc:
             if amount:
                 total += float(amount)
         return total
+
+    def get_mint_account(self, mint: str) -> Dict[str, Any]:
+        """The SPL mint's own parsed state: authorities, supply, decimals.
+
+        This is where the two questions that matter most are answered - can
+        anyone still print more of this, and can anyone freeze yours.
+        """
+        result = self.call(
+            "getAccountInfo", [mint, {"encoding": "jsonParsed", "commitment": "confirmed"}]
+        )
+        data = (((result or {}).get("value") or {}).get("data") or {})
+        if not isinstance(data, dict):
+            return {}
+        return ((data.get("parsed") or {}).get("info") or {})
+
+    def get_token_supply(self, mint: str) -> float:
+        result = self.call("getTokenSupply", [mint, {"commitment": "confirmed"}])
+        return float(((result or {}).get("value") or {}).get("uiAmount") or 0.0)
+
+    def get_token_largest_accounts(self, mint: str) -> List[float]:
+        """The 20 biggest token accounts, largest first, as UI amounts.
+
+        Token accounts, not owners: the RPC does not return who holds them, so
+        one person spread across several accounts reads as several holders.
+        It undercounts concentration; it never invents it.
+        """
+        result = self.call("getTokenLargestAccounts", [mint, {"commitment": "confirmed"}])
+        amounts = []
+        for entry in (result or {}).get("value") or []:
+            amount = (entry or {}).get("uiAmount")
+            if amount:
+                amounts.append(float(amount))
+        amounts.sort(reverse=True)
+        return amounts
 
     def get_latest_blockhash(self) -> Dict[str, Any]:
         result = self.call("getLatestBlockhash", [{"commitment": "confirmed"}])

@@ -29,14 +29,31 @@ def healthy_clients():
     return dex, jup
 
 
-@pytest.fixture
-def armed(monkeypatch):
-    """An armed, working executor - so checks under test are the ones failing."""
+def stub_chain_reads(monkeypatch):
+    """A readable chain. Without these the health check reaches mainnet."""
+    monkeypatch.setattr("memebot.execution.live.SolanaRpc.get_mint_account",
+                        lambda self, mint: {"mintAuthority": None, "freezeAuthority": None,
+                                            "decimals": 9, "supply": "1"})
+    monkeypatch.setattr("memebot.execution.live.SolanaRpc.get_token_supply",
+                        lambda self, mint: 1_400_000.0)
+    monkeypatch.setattr("memebot.execution.live.SolanaRpc.get_token_largest_accounts",
+                        lambda self, mint: [100.0, 50.0])
+
+
+def stub_live_chain(monkeypatch):
+    """...plus a working executor, so the check under test is the one failing."""
     monkeypatch.setenv("LIVE_TRADING_CONFIRM", "I_UNDERSTAND_THE_RISK")
     monkeypatch.setattr("memebot.execution.live.LiveExecutor.preflight",
                         lambda self, require_arming=True: None)
     monkeypatch.setattr("memebot.execution.live.LiveExecutor.describe",
                         lambda self: "live via Jupiter (test)")
+    stub_chain_reads(monkeypatch)
+
+
+@pytest.fixture
+def armed(monkeypatch):
+    """An armed, working executor - so checks under test are the ones failing."""
+    stub_live_chain(monkeypatch)
 
 
 def status_of(report, name):
@@ -44,11 +61,7 @@ def status_of(report, name):
 
 
 def test_everything_reachable_reports_healthy(config, monkeypatch):
-    monkeypatch.setenv("LIVE_TRADING_CONFIRM", "I_UNDERSTAND_THE_RISK")
-    monkeypatch.setattr("memebot.execution.live.LiveExecutor.preflight",
-                        lambda self, require_arming=True: None)
-    monkeypatch.setattr("memebot.execution.live.LiveExecutor.describe",
-                        lambda self: "live via Jupiter (test)")
+    stub_live_chain(monkeypatch)
     dex, jup = healthy_clients()
     config.filters.min_liquidity_usd = 1_000       # let the sample pair through
     config.filters.min_volume_h24_usd = 1_000
@@ -123,6 +136,7 @@ def test_a_narrow_scan_is_called_out(config, armed):
 def test_a_setup_that_is_ready_but_not_armed_passes(config, monkeypatch):
     """Arming is an act, not a fault: the menu does it when you press start."""
     monkeypatch.delenv("LIVE_TRADING_CONFIRM", raising=False)
+    stub_chain_reads(monkeypatch)
     monkeypatch.setattr("memebot.execution.live.LiveExecutor.preflight",
                         lambda self, require_arming=True: None)
     monkeypatch.setattr("memebot.execution.live.LiveExecutor.describe",
@@ -138,6 +152,7 @@ def test_a_setup_that_is_ready_but_not_armed_passes(config, monkeypatch):
 def test_the_health_check_reports_what_is_actually_wrong(config, monkeypatch):
     """Unarmed used to mask this: no wallet is the thing to say."""
     monkeypatch.delenv("LIVE_TRADING_CONFIRM", raising=False)
+    stub_chain_reads(monkeypatch)
     dex, jup = healthy_clients()
 
     report = run_checks(config, deep=False, data=dex, jupiter=jup)

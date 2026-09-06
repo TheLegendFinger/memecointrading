@@ -340,9 +340,13 @@ def _run_checks(
         # In and out: two swaps, each a flat cost plus the venue's percentage.
         round_trip = 2 * flat + 2 * smallest * (e.fee_bps / 10_000.0)
         share = round_trip / smallest if smallest > 0 else float("inf")
+        reserve = config.fee_reserve_sol
         detail = (
             f"smallest position ${smallest:,.2f}; a round trip costs about "
-            f"${round_trip:.2f} ({share * 100:.0f}% of it)"
+            f"${round_trip:.2f} ({share * 100:.0f}% of it); "
+            f"{reserve:.4f} SOL held back for rent and fees"
+            + (" (set in your config)" if config.execution.sol_fee_reserve > 0
+               else f" (sized for {config.risk.max_open_positions} positions)")
         )
         if share >= 0.5:
             return WARN, detail + (

@@ -147,8 +147,17 @@ execution:
   compute_unit_limit: 300000
   max_tx_retries: 3
   confirm_timeout_seconds: 90
-  # SOL held back for fees and token-account rent, never traded.
-  sol_fee_reserve: 0.025
+  # SOL held back for fees and token-account rent, never traded. It is not a
+  # cushion against bad trades - it is what lets the wallet transact at all.
+  # Every coin it has never held needs a token account (~0.00204 SOL, refunded
+  # if the account is later closed) and every swap costs a fee. Run out and the
+  # wallet cannot sign the SELL either, leaving you stuck holding something.
+  #
+  # 0 works it out from risk.max_open_positions - rent for each, a round trip
+  # for each, plus a few spare swaps. At three positions that is ~0.007 SOL
+  # instead of a flat 0.025, which is about $3.50 more to trade with.
+  # Put a number here to override it.
+  sol_fee_reserve: 0
   # Trade against SOL. Change to the USDC mint to hold stables between trades.
   quote_mint: So11111111111111111111111111111111111111112
   # The free public node. It works for trading, but refuses some heavy reads

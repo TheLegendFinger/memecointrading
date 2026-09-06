@@ -188,7 +188,7 @@ def test_a_full_live_cycle_with_the_real_executor(config, monkeypatch):
     report = engine.run_cycle()
 
     # Bankroll came from the wallet: 0.4 SOL at $150, less the 0.025 reserve.
-    expected_cash = (0.4 - config.execution.sol_fee_reserve) * 150.0
+    expected_cash = (0.4 - config.fee_reserve_sol) * 150.0
     assert engine.portfolio.starting_cash == pytest.approx(expected_cash, rel=1e-6)
 
     assert len(report.opened) == 1
@@ -228,5 +228,5 @@ def test_live_cycle_books_nothing_when_the_swap_reverts(config, monkeypatch):
 
     # Cash still reflects the chain, untouched by the attempt: the wallet is
     # re-read every cycle, so a reverted swap cannot leave the books drifting.
-    wallet_cash = (0.4 - config.execution.sol_fee_reserve) * 150.0
+    wallet_cash = (0.4 - config.fee_reserve_sol) * 150.0
     assert engine.portfolio.cash == pytest.approx(wallet_cash, rel=1e-6)

@@ -235,10 +235,12 @@ class LiveExecutor(Executor):
             return f"cannot reach RPC {self.cfg.rpc_url}: {exc}"
 
         sol = lamports / LAMPORTS_PER_SOL
-        if sol < self.cfg.sol_fee_reserve:
+        reserve = self.config.fee_reserve_sol
+        if sol < reserve:
             return (
                 f"wallet {self._pubkey} holds {sol:.4f} SOL, below the "
-                f"{self.cfg.sol_fee_reserve:.3f} SOL fee reserve - it cannot pay for a swap. "
+                f"{reserve:.4f} SOL it needs for fees and token-account rent - it "
+                f"cannot pay for a swap. "
                 "Send it more SOL."
             )
         return None
@@ -310,12 +312,12 @@ class LiveExecutor(Executor):
                 return None
 
             if quote_mint == WSOL_MINT:
-                spendable = max(0.0, self.sol_balance() - self.cfg.sol_fee_reserve)
+                spendable = max(0.0, self.sol_balance() - self.config.fee_reserve_sol)
                 return spendable * price
 
             # Trading against a token (USDC): its balance is the bankroll, but
             # the wallet still needs SOL for fees.
-            if self.sol_balance() < self.cfg.sol_fee_reserve:
+            if self.sol_balance() < self.config.fee_reserve_sol:
                 return 0.0
             return self.rpc.get_token_balance(self.wallet_address, quote_mint) * price
         except (HttpError, LiveExecutionError) as exc:
@@ -333,7 +335,7 @@ class LiveExecutor(Executor):
         summary["sol_balance"] = self.sol_balance()
         summary["sol_price_usd"] = self.jupiter.price(WSOL_MINT)
         summary["sol_value_usd"] = summary["sol_balance"] * (summary["sol_price_usd"] or 0.0)
-        summary["fee_reserve_sol"] = self.cfg.sol_fee_reserve
+        summary["fee_reserve_sol"] = self.config.fee_reserve_sol
         summary["available_cash_usd"] = self.available_cash_usd()
         if self.cfg.quote_mint != WSOL_MINT:
             summary["quote_balance"] = self.rpc.get_token_balance(

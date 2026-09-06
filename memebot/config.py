@@ -21,6 +21,18 @@ from typing import Any, Dict, List, Optional
 from .models import USDC_MINT, WSOL_MINT
 from .storage import resolve_state_target
 
+# Rent-exemption for one SPL token account: what Solana charges to let a wallet
+# hold a coin it has never held before. Refunded if the account is closed.
+TOKEN_ACCOUNT_RENT_SOL = 0.00204
+LAMPORTS_PER_SOL = 1_000_000_000
+BASE_TX_FEE_LAMPORTS = 5_000
+# Spare swaps beyond the round trip each open position needs, so a retry or a
+# split exit never runs the wallet dry mid-trade.
+SPARE_SWAPS = 6
+# However small the arithmetic comes out, never leave less than this: a wallet
+# that cannot pay for a transaction cannot sell what it is holding.
+MIN_FEE_RESERVE_SOL = 0.004
+
 logger = logging.getLogger(__name__)
 
 EXAMPLE_NAME = "config.example.yaml"
@@ -231,8 +243,10 @@ class ExecutionConfig:
     # Live only:
     rpc_url: str = "https://api.mainnet-beta.solana.com"
     # SOL held back from trading to pay network fees and token-account rent.
-    # Roughly 0.002 SOL per new token account plus fees, so this covers ~10 buys.
-    sol_fee_reserve: float = 0.025
+    # 0 means "work it out" - see BotConfig.fee_reserve_sol, which sizes it from
+    # max_open_positions rather than from a round number someone once picked.
+    # Set a value here to override that.
+    sol_fee_reserve: float = 0.0
     priority_fee_microlamports: int = 200_000
     compute_unit_limit: int = 300_000
     max_tx_retries: int = 3
@@ -263,6 +277,35 @@ class BotConfig:
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
 
     # ---- helpers ---------------------------------------------------------------
+    @property
+    def swap_fee_sol(self) -> float:
+        """What one swap costs in fees, at the configured priority."""
+        priority = (self.execution.priority_fee_microlamports
+                    * max(1, self.execution.compute_unit_limit) / 1e6)
+        return (priority + BASE_TX_FEE_LAMPORTS) / LAMPORTS_PER_SOL
+
+    @property
+    def fee_reserve_sol(self) -> float:
+        """SOL kept back from trading, so the wallet can always pay its way out.
+
+        This is not a safety cushion against bad trades - it is the cost of
+        being able to transact at all. Every coin the wallet has never held
+        needs a token account (rent, refundable), and every swap costs a fee.
+        If it runs out, the wallet cannot sign the sell either, and you are
+        stuck holding whatever it last bought.
+
+        Sized from what this config can actually do - max_open_positions
+        accounts, a round trip for each, plus a few spare swaps - rather than
+        from a fixed number that has to guess. execution.sol_fee_reserve
+        overrides it.
+        """
+        if self.execution.sol_fee_reserve > 0:
+            return self.execution.sol_fee_reserve
+        positions = max(1, self.risk.max_open_positions)
+        swaps = 2 * positions + SPARE_SWAPS
+        needed = positions * TOKEN_ACCOUNT_RENT_SOL + swaps * self.swap_fee_sol
+        return max(MIN_FEE_RESERVE_SOL, round(needed, 5))
+
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
@@ -483,6 +526,7 @@ LEGACY_EXAMPLE_FINGERPRINTS = {
     "7f9fd0c0e716485c8a8d2a037857f9e84c631a26e900ad3f6d103a30a12c71d5",
     "15b31b6f9d53be5c55bb65f28fc33c3f7eea8ba5f47fc9c376cbf515df06655e",
     "b4964395c35dc7813a0029c4deb10fa93d352c55ad0fe836edb9aa51204bb6c3",
+    "f8bfd3721f833491a5f4b2a51a924c6e8f05aa9c0929af7d998473c4e983d7ad",
 }
 
 

@@ -284,3 +284,68 @@ def test_a_part_sale_is_not_booked_as_the_trade_s_result(config, hot_pair):
     engine.run_position_tick()      # the rest goes out
     assert not engine.portfolio.has_position(hot_pair.base.address)
     assert len(engine.storage.closed_outcomes()) == 1
+
+
+# ---- the fee reserve -------------------------------------------------------------
+def test_the_reserve_is_sized_from_what_the_config_can_actually_do(config):
+    """0.025 SOL was a round number picked for ten concurrent positions when
+    the cap is three - $5 sitting idle on a wallet that trades in dollars."""
+    from memebot.config import TOKEN_ACCOUNT_RENT_SOL
+
+    config.execution.sol_fee_reserve = 0.0
+    config.risk.max_open_positions = 3
+
+    reserve = config.fee_reserve_sol
+
+    assert reserve >= 3 * TOKEN_ACCOUNT_RENT_SOL, "rent for every coin it may hold"
+    assert reserve < 0.025, "and far less than the number it replaces"
+
+
+def test_more_positions_need_more_reserve(config):
+    config.execution.sol_fee_reserve = 0.0
+    config.risk.max_open_positions = 1
+    small = config.fee_reserve_sol
+    config.risk.max_open_positions = 8
+    assert config.fee_reserve_sol > small
+
+
+def test_a_higher_priority_fee_needs_more_reserve(config):
+    config.execution.sol_fee_reserve = 0.0
+    cheap = config.fee_reserve_sol
+    config.execution.priority_fee_microlamports = 5_000_000
+    assert config.fee_reserve_sol > cheap
+
+
+def test_the_reserve_never_drops_to_nothing(config):
+    """A wallet that cannot pay for a transaction cannot sell what it holds."""
+    from memebot.config import MIN_FEE_RESERVE_SOL
+
+    config.execution.sol_fee_reserve = 0.0
+    config.risk.max_open_positions = 1
+    config.execution.priority_fee_microlamports = 0
+    config.execution.compute_unit_limit = 1
+
+    assert config.fee_reserve_sol >= MIN_FEE_RESERVE_SOL
+
+
+def test_an_explicit_reserve_still_wins(config):
+    config.execution.sol_fee_reserve = 0.05
+    assert config.fee_reserve_sol == 0.05
+
+
+def test_the_reserve_is_what_the_wallet_holds_back(config):
+    """It is subtracted from the bankroll, so getting it wrong is money idle."""
+    from memebot.execution.live import LiveExecutor
+    from memebot.models import WSOL_MINT
+
+    config.execution.sol_fee_reserve = 0.0
+    config.execution.quote_mint = WSOL_MINT
+    executor = LiveExecutor.__new__(LiveExecutor)
+    executor.config = config
+    executor.cfg = config.execution
+    executor.sol_balance = lambda: 0.4
+    executor._quote_price_usd = lambda: 150.0
+
+    tradable = executor.available_cash_usd()
+
+    assert tradable == pytest.approx((0.4 - config.fee_reserve_sol) * 150.0)

@@ -458,8 +458,13 @@ def cmd_wallet(args: argparse.Namespace, config: BotConfig) -> int:
 
     available = summary.get("available_cash_usd")
     if available is not None:
-        print(f"  Tradable  {_money(available)}  "
-              f"(after a {summary['fee_reserve_sol']:.3f} SOL fee reserve)")
+        reserve = summary["fee_reserve_sol"]
+        from .config import TOKEN_ACCOUNT_RENT_SOL
+
+        accounts = config.risk.max_open_positions
+        print(f"  Tradable  {_money(available)}  (holding back {reserve:.4f} SOL: "
+              f"rent for {accounts} token account(s) at {TOKEN_ACCOUNT_RENT_SOL:.5f} "
+              f"each, plus swap fees)")
         size = min(config.risk.max_position_usd, available * config.risk.position_size_pct)
         if available <= 0:
             print("\n  Not enough SOL to trade. Send some to the address above.")

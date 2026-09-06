@@ -37,7 +37,7 @@ time, then opens a menu — everything is a number:
 ```
   ╋╋╋╋╋╋╋╋╋╋┏┓╋╋┏┓
   ┏━━┳━┳━━┳━┫┗┳━┫┗┓
-  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.7.0
+  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.7.1
   ┗┻┻┻━┻┻┻┻━┻━┻━┻━┛   LIVE - real money
 
    $1,043.18 · $812.40 cash · 2 open · +4.32%
@@ -538,6 +538,7 @@ Worth tuning first:
 | `execution.slippage_bps` | `150` | On buys. Too low and orders revert; too high and you get sandwiched. |
 | `execution.exit_slippage_bps` | `500` | On sells. Never tighter than the buy tolerance — getting out must not be harder than getting in. |
 | `execution.check_exit_route` | `true` | Quote the way out before buying, and skip coins that cannot be sold back. |
+| `execution.sol_fee_reserve` | `0` (auto) | SOL never traded, so the wallet can always pay to sell. `0` sizes it from `max_open_positions` — rent per token account plus swap fees. |
 
 `config.yaml` is your copy of `config.example.yaml`, and while you have not
 edited it, it is kept in step with the recommended settings automatically -

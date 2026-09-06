@@ -37,7 +37,7 @@ time, then opens a menu — everything is a number:
 ```
   ╋╋╋╋╋╋╋╋╋╋┏┓╋╋┏┓
   ┏━━┳━┳━━┳━┫┗┳━┫┗┓
-  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.7.1
+  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.7.2
   ┗┻┻┻━┻┻┻┻━┻━┻━┻━┛   LIVE - real money
 
    $1,043.18 · $812.40 cash · 2 open · +4.32%
@@ -422,6 +422,13 @@ When every route out is refused, the bot backs off for `exit_retry_seconds`
 rather than retrying on the next five-second tick. Twelve identical failures a
 minute is not persistence, it is a wall of noise hiding everything else in the
 feed.
+
+When the node simulates a swap and refuses it — error `-32002`, almost always
+because the price moved between the quote and the send — the bot fetches a
+fresh quote and tries once more (`requote_on_preflight_failure`). That retry is
+safe precisely because a simulation failure means the transaction never reached
+the network, so there is nothing to double-spend; anything that might already
+be in flight is reported rather than repeated.
 
 And before buying at all, it asks Jupiter what selling the position straight
 back would cost (`check_exit_route`). DexScreener reports the whole pool; what

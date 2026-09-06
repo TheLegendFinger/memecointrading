@@ -235,6 +235,11 @@ class ExecutionConfig:
     # Before buying, ask what selling the position straight back would cost.
     # A coin you cannot get out of is not a trade, it is a donation.
     check_exit_route: bool = True
+    # When the node simulates a swap and refuses it - almost always because
+    # the price moved between the quote and the send - fetch a fresh quote and
+    # try once more. Safe precisely because a simulation failure means nothing
+    # reached the network.
+    requote_on_preflight_failure: bool = True
     # Swap fee charged by the venue (Raydium/Orca style pools ~0.25%).
     fee_bps: int = 25
     # Flat per-swap network + priority fee, in USD, used by the paper model.
@@ -527,6 +532,7 @@ LEGACY_EXAMPLE_FINGERPRINTS = {
     "15b31b6f9d53be5c55bb65f28fc33c3f7eea8ba5f47fc9c376cbf515df06655e",
     "b4964395c35dc7813a0029c4deb10fa93d352c55ad0fe836edb9aa51204bb6c3",
     "f8bfd3721f833491a5f4b2a51a924c6e8f05aa9c0929af7d998473c4e983d7ad",
+    "a36bf9a3a09a852b44d9b55a3764401104c7bf946dccfa0f3677b8e45addde5f",
 }
 
 

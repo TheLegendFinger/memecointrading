@@ -140,6 +140,11 @@ execution:
   # Before buying, ask what selling it straight back would cost. A coin you
   # cannot get out of is not a trade.
   check_exit_route: true
+  # When the node simulates a swap and refuses it - almost always because the
+  # price moved between the quote and the send - fetch a fresh quote and try
+  # once more. Safe because a simulation failure means nothing reached the
+  # network, so there is nothing to double-spend.
+  requote_on_preflight_failure: true
   fee_bps: 25
   # A higher priority fee lands more transactions when the network is busy.
   # 0.0003 SOL-ish per swap at 300k microlamports.

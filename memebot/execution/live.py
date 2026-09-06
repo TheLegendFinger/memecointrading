@@ -37,6 +37,84 @@ class LiveExecutionError(RuntimeError):
     pass
 
 
+# What Solana's JSON-RPC error codes actually mean, in words. Without this a
+# failure reads as "{'code': -32002, 'message': ...}" - and once the activity
+# feed has trimmed it, as "{'code': -3200".
+RPC_ERROR_MEANINGS = {
+    -32002: "the node simulated the transaction and it failed",
+    -32003: "signature verification failed",
+    -32004: "the block is not available yet",
+    -32005: "the node is behind or rate-limiting this wallet",
+    -32007: "that slot was skipped or is missing",
+    -32009: "that slot was skipped or is missing",
+    -32015: "the node does not support this transaction version",
+    -32016: "the node has not caught up to the required slot",
+    -32601: "the node does not offer this method",
+    -32602: "the request was malformed",
+}
+
+# Anchor program errors start at 6000. Jupiter's 6001 is the one that matters:
+# the price moved between the quote and the send.
+CUSTOM_PROGRAM_ERRORS = {
+    "0x1771": "slippage tolerance exceeded - the price moved between quote and send",
+}
+
+
+def _custom_program_error(text: str) -> str:
+    for code, meaning in CUSTOM_PROGRAM_ERRORS.items():
+        if code in text:
+            return meaning
+    if "insufficient lamports" in text or "InsufficientFunds" in text:
+        return "not enough SOL to pay for the transaction"
+    if "blockhash not found" in text.lower() or "BlockhashNotFound" in text:
+        return "the blockhash expired before it landed - the network was busy"
+    return ""
+
+
+def is_preflight_failure(message: str) -> bool:
+    """Whether the node rejected the transaction before forwarding it.
+
+    This is the only case where trying again is provably safe: a simulation
+    that fails means nothing reached the network, so there is nothing to
+    double-spend. Anything that might already be in flight is left alone.
+    """
+    text = message.lower()
+    return (
+        "[-32002]" in text
+        or "simulation failed" in text
+        or "slippage tolerance exceeded" in text
+    )
+
+
+def describe_rpc_error(method: str, error: Any) -> str:
+    """Turn a JSON-RPC error object into a sentence, meaning first.
+
+    Meaning first on purpose: everything that displays this truncates, so the
+    part that survives has to be the part worth reading.
+    """
+    if not isinstance(error, dict):
+        return f"{method} failed: {error}"
+    code = error.get("code")
+    message = str(error.get("message") or "").strip()
+    meaning = RPC_ERROR_MEANINGS.get(code, "")
+
+    detail = message
+    data = error.get("data")
+    if isinstance(data, dict):
+        logs = data.get("logs")
+        if isinstance(logs, list) and logs:
+            detail = f"{detail} | {logs[-1]}" if detail else str(logs[-1])
+        elif data.get("err") is not None and not detail:
+            detail = str(data["err"])
+
+    cause = _custom_program_error(f"{message} {detail}")
+    parts = [p for p in (cause or meaning, f"{method} [{code}]") if p]
+    line = " - ".join(parts)
+    if detail and detail not in line:
+        line = f"{line}: {detail}"
+    return line
+
+
 def is_armed() -> bool:
     """Whether this process has acknowledged that orders spend real money."""
     return os.environ.get(CONFIRM_ENV, "") == CONFIRM_VALUE
@@ -103,7 +181,7 @@ class SolanaRpc:
         if not isinstance(data, dict):
             raise HttpError(f"Unexpected RPC response for {method}")
         if "error" in data:
-            raise HttpError(f"RPC {method} error: {data['error']}")
+            raise HttpError(describe_rpc_error(method, data["error"]))
         return data.get("result")
 
     def get_balance_lamports(self, pubkey: str) -> int:
@@ -442,15 +520,27 @@ class LiveExecutor(Executor):
         if blocked:
             return Fill(order=order, ok=False, error=blocked)
 
-        try:
-            return self._execute(order)
-        except LiveExecutionError as exc:
-            return Fill(order=order, ok=False, error=str(exc))
-        except HttpError as exc:
-            return Fill(order=order, ok=False, error=f"network error: {exc}")
-        except Exception as exc:  # pragma: no cover - defensive
-            log.exception("Unexpected live execution failure")
-            return Fill(order=order, ok=False, error=f"unexpected error: {exc}")
+        attempts = 2 if self.cfg.requote_on_preflight_failure else 1
+        for attempt in range(attempts):
+            try:
+                return self._execute(order)
+            except LiveExecutionError as exc:
+                return Fill(order=order, ok=False, error=str(exc))
+            except HttpError as exc:
+                message = str(exc)
+                last = attempt == attempts - 1
+                if last or not is_preflight_failure(message):
+                    return Fill(order=order, ok=False, error=f"network error: {message}")
+                # The node simulated it and refused, which means it never
+                # forwarded it - nothing is on chain and nothing can be
+                # double-spent by trying again. Almost always the price moved
+                # between the quote and the send, so the fix is a fresh quote,
+                # not a resend of the stale one.
+                log.info("Re-quoting after a pre-flight refusal: %s", message)
+            except Exception as exc:  # pragma: no cover - defensive
+                log.exception("Unexpected live execution failure")
+                return Fill(order=order, ok=False, error=f"unexpected error: {exc}")
+        return Fill(order=order, ok=False, error="could not place the order")
 
     def _execute(self, order: Order) -> Fill:
         quote_mint = self.cfg.quote_mint

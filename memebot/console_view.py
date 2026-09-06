@@ -175,10 +175,38 @@ class ConsoleView:
                 message = message[:47] + "…" if unicode_ok() else message[:47] + "."
             lines.append("   " + paint(stamp, GREY) + "  " + paint(mark, colour)
                          + "  " + paint(message, WHITE if event["kind"] in ("buy", "sell") else GREY))
-            if event["detail"] and event["kind"] in ("buy", "sell", "error", "halt"):
-                detail = event["detail"]
-                lines.append(paint("           " + (detail[:56]), GREY))
+            if event["detail"] and event["kind"] in ("buy", "sell", "error", "halt", "safety"):
+                # Wrapped, not chopped. Cutting at 56 characters is how
+                # "network error: RPC sendTransaction error: {'code': -32002,
+                # 'message': ...}" reached the screen as "{'code': -3200" -
+                # every character that mattered was past the cut.
+                for row in self._wrap(event["detail"], 56, limit=2):
+                    lines.append(paint("           " + row, GREY))
         return lines + [""]
+
+    @staticmethod
+    def _wrap(text: str, width: int, limit: int = 2) -> List[str]:
+        """Break `text` on spaces into at most `limit` lines of `width`."""
+        words, rows, row = text.split(), [], ""
+        for word in words:
+            candidate = f"{row} {word}".strip()
+            if len(candidate) > width and row:
+                rows.append(row)
+                row = word
+                if len(rows) == limit:
+                    break
+            else:
+                row = candidate
+        if row and len(rows) < limit:
+            rows.append(row)
+        if not rows:
+            return []
+        # Anything past the last line it will show gets an ellipsis, so a
+        # trimmed message never looks like a complete one.
+        shown = sum(len(r) for r in rows) + len(rows) - 1
+        if shown < len(text.strip()):
+            rows[-1] = rows[-1][: width - 1] + ("…" if unicode_ok() else ".")
+        return rows
 
     def footer(self, engine) -> List[str]:
         dot = self.glyphs.dot

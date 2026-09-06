@@ -209,17 +209,26 @@ class TradingEngine:
         return snapshots
 
     def _exit_plan(self, position: Position) -> List[tuple]:
-        """Ways to get out, in order of preference: (tolerance_bps, fraction).
+        """Ways to get out, in order: (tolerance_bps, fraction, direct_only).
 
-        A pool that cannot take the whole position at 5% may well take half of
-        it, because impact scales with size. So widen once, then start
-        halving - rather than refusing to sell and holding a coin the bot has
-        already decided to be out of.
+        Three different things can stop a sell, so the attempts vary all three:
+
+        * the price moved - a wider tolerance covers it;
+        * the pool is too thin for the whole position - impact scales with
+          size, so half of it may go where all of it will not;
+        * the swap program refused the route itself. Widening and splitting do
+          nothing for that; asking for a direct, single-pool route might, and
+          it is the only lever left.
         """
         e = self.config.execution
         start = max(e.exit_slippage_bps, e.slippage_bps)
         ceiling = max(e.max_exit_slippage_bps, start)
-        plan = [(start, 1.0), (ceiling, 1.0), (ceiling, 0.5), (ceiling, 0.25)]
+        plan = [
+            (start, 1.0, False),
+            (ceiling, 1.0, True),      # a different route, not just a wider one
+            (ceiling, 0.5, True),
+            (ceiling, 0.25, True),
+        ]
         return plan[: max(1, e.exit_attempts)]
 
     def _close_position(self, position: Position, reason: str, report: CycleReport) -> None:
@@ -230,7 +239,7 @@ class TradingEngine:
         symbol = position.token.symbol or address[:8]
         last_error = ""
 
-        for tolerance, fraction in self._exit_plan(position):
+        for tolerance, fraction, direct_only in self._exit_plan(position):
             amount = position.quantity * fraction
             if amount <= 0:
                 break
@@ -240,6 +249,10 @@ class TradingEngine:
                 reference_price=price,
                 token_amount=amount,
                 slippage_bps=tolerance,
+                only_direct_routes=direct_only,
+                # A shorter account list keeps the transaction small, which is
+                # the other thing that makes a complicated route fail.
+                max_accounts=32 if direct_only else None,
                 reason=reason if fraction >= 1.0 else f"{reason} (selling {fraction:.0%})",
             )
             fill = self.executor.execute(order)
@@ -248,8 +261,9 @@ class TradingEngine:
                 self._exit_retry_after.pop(address, None)
                 return
             last_error = fill.error or "unknown error"
-            log.info("Exit attempt for %s at %dbps x%.2f failed: %s",
-                     symbol, tolerance, fraction, last_error)
+            log.info("Exit attempt for %s at %dbps x%.2f%s failed: %s",
+                     symbol, tolerance, fraction,
+                     " (direct route)" if direct_only else "", last_error)
 
         # Every route out was refused. Back off rather than retrying on the
         # next tick: the pool will not have changed in five seconds, and a

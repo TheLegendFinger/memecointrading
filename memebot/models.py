@@ -120,6 +120,11 @@ class Order:
     usd_amount: float = 0.0  # buys: how much quote currency to spend
     token_amount: float = 0.0  # sells: how many base tokens to sell
     slippage_bps: int = 100
+    # Ask the aggregator for a simpler route. A multi-hop route through several
+    # pools has more ways to be refused by the swap program; when one has
+    # already been refused, the next attempt asks for a direct one.
+    only_direct_routes: bool = False
+    max_accounts: Optional[int] = None
     reason: str = ""
     pair: Optional[PairSnapshot] = None
     client_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])

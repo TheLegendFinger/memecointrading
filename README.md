@@ -37,7 +37,7 @@ time, then opens a menu — everything is a number:
 ```
   ╋╋╋╋╋╋╋╋╋╋┏┓╋╋┏┓
   ┏━━┳━┳━━┳━┫┗┳━┫┗┓
-  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.7.2
+  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.7.3
   ┗┻┻┻━┻┻┻┻━┻━┻━┻━┛   LIVE - real money
 
    $1,043.18 · $812.40 cash · 2 open · +4.32%
@@ -184,7 +184,7 @@ change anything — there is no wallet key in the deployment at all.
 | `scan` | Score the live market and print the table — never trades. |
 | `status` | Portfolio summary (`--json` for scripts). |
 | `trades` | Recent fills with fees, slippage and realized P&L. |
-| `liquidate` | Close every open position at market. |
+| `liquidate` | Close every open position at market. `--max-slippage-bps 3000` to accept a bad price on a coin that will not shift. |
 | `reset` | Wipe the bot's trade history. Moves no funds. |
 | `learn` | What the bot has concluded from its own closed trades, bucket by bucket (`--json` for scripts). |
 | `config` | Print the effective configuration after file + env + flags. `--reset` restores the recommended `config.yaml`. |
@@ -417,6 +417,13 @@ not take the position at that price, widen to `max_exit_slippage_bps` (15%) and
 then sell **in halves** — impact scales with size, so half a position often goes
 where all of it will not. A part sale leaves the rest open and the next tick
 takes another run at it.
+
+Three different things stop a sell, so the attempts vary all three. A wider
+tolerance covers a price that moved. A smaller size covers a pool too thin to
+take the whole position. And when the swap program refuses the **route itself**
+— a Jupiter custom program error, which widening and splitting do nothing for —
+the next attempt asks for a direct, single-pool route with a shorter account
+list. That is the only lever left, and it is a genuinely different transaction.
 
 When every route out is refused, the bot backs off for `exit_retry_seconds`
 rather than retrying on the next five-second tick. Twelve identical failures a

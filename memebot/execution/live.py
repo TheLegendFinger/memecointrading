@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -53,17 +54,40 @@ RPC_ERROR_MEANINGS = {
     -32602: "the request was malformed",
 }
 
-# Anchor program errors start at 6000. Jupiter's 6001 is the one that matters:
-# the price moved between the quote and the send.
-CUSTOM_PROGRAM_ERRORS = {
-    "0x1771": "slippage tolerance exceeded - the price moved between quote and send",
-}
+JUPITER_PROGRAM = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"
+# Anchor numbers a program's own errors from 6000. 0x1771 is 6001, Jupiter's
+# slippage error, and the only one worth naming from memory - the rest are
+# reported by number so they can be looked up rather than guessed at.
+ANCHOR_ERROR_BASE = 6000
+SLIPPAGE_ERROR_HEX = "0x1771"
+CUSTOM_ERROR_RE = re.compile(r"custom program error:\s*(0[xX][0-9a-fA-F]+)")
+
+
+def custom_program_error_code(text: str) -> Optional[str]:
+    """The hex code from a "custom program error: 0x…" message, if there is one."""
+    match = CUSTOM_ERROR_RE.search(text or "")
+    return match.group(1).lower() if match else None
+
+
+def _describe_custom_error(code: str) -> str:
+    if code == SLIPPAGE_ERROR_HEX:
+        return "slippage tolerance exceeded - the price moved between quote and send"
+    try:
+        number = int(code, 16)
+    except ValueError:  # pragma: no cover - the regex only matches hex
+        return f"the swap program rejected it ({code})"
+    if number >= ANCHOR_ERROR_BASE:
+        return (
+            f"the swap program rejected the route (Jupiter error {number}, {code}) - "
+            "this route will keep failing, a different one may not"
+        )
+    return f"the swap program rejected it (error {number}, {code})"
 
 
 def _custom_program_error(text: str) -> str:
-    for code, meaning in CUSTOM_PROGRAM_ERRORS.items():
-        if code in text:
-            return meaning
+    code = custom_program_error_code(text)
+    if code:
+        return _describe_custom_error(code)
     if "insufficient lamports" in text or "InsufficientFunds" in text:
         return "not enough SOL to pay for the transaction"
     if "blockhash not found" in text.lower() or "BlockhashNotFound" in text:
@@ -78,12 +102,26 @@ def is_preflight_failure(message: str) -> bool:
     that fails means nothing reached the network, so there is nothing to
     double-spend. Anything that might already be in flight is left alone.
     """
-    text = message.lower()
+    text = (message or "").lower()
     return (
         "[-32002]" in text
         or "simulation failed" in text
         or "slippage tolerance exceeded" in text
     )
+
+
+def is_worth_requoting(message: str) -> bool:
+    """Whether the SAME route is worth asking for again.
+
+    A stale price is worth re-quoting: the next quote has a new one. A program
+    error is not - the route itself is what the program refused, so quoting it
+    again produces the same transaction and the same refusal, which is exactly
+    what happened when every -32002 was treated as a stale price.
+    """
+    if not is_preflight_failure(message):
+        return False
+    code = custom_program_error_code(message)
+    return code is None or code == SLIPPAGE_ERROR_HEX
 
 
 def describe_rpc_error(method: str, error: Any) -> str:
@@ -529,7 +567,7 @@ class LiveExecutor(Executor):
             except HttpError as exc:
                 message = str(exc)
                 last = attempt == attempts - 1
-                if last or not is_preflight_failure(message):
+                if last or not is_worth_requoting(message):
                     return Fill(order=order, ok=False, error=f"network error: {message}")
                 # The node simulated it and refused, which means it never
                 # forwarded it - nothing is on chain and nothing can be
@@ -561,9 +599,17 @@ class LiveExecutor(Executor):
         if in_amount <= 0:
             return Fill(order=order, ok=False, error="order size rounds to zero base units")
 
-        quote = self.jupiter.quote(in_mint, out_mint, in_amount, slippage_bps)
+        quote = self.jupiter.quote(
+            in_mint, out_mint, in_amount, slippage_bps,
+            only_direct_routes=order.only_direct_routes,
+            max_accounts=order.max_accounts,
+        )
         if quote is None:
-            return Fill(order=order, ok=False, error="no route found")
+            return Fill(
+                order=order, ok=False,
+                error=("no direct route found" if order.only_direct_routes
+                       else "no route found"),
+            )
         if quote.price_impact_pct > slippage_bps / 100.0:
             return Fill(
                 order=order,

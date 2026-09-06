@@ -575,6 +575,14 @@ def cmd_trades(args: argparse.Namespace, config: BotConfig) -> int:
 
 
 def cmd_liquidate(args: argparse.Namespace, config: BotConfig) -> int:
+    # A coin the normal ceiling cannot shift is exactly when you want to raise
+    # it, and editing a config file mid-panic is not a workflow.
+    if getattr(args, "max_slippage_bps", None):
+        config.execution.max_exit_slippage_bps = int(args.max_slippage_bps)
+        config.execution.exit_slippage_bps = min(config.execution.exit_slippage_bps,
+                                                 int(args.max_slippage_bps))
+        print(f"Selling with a tolerance of up to "
+              f"{args.max_slippage_bps / 100:.1f}% - expect a poor price.")
     engine = _build_engine(config)
     if not engine.portfolio.positions:
         print("No open positions.")
@@ -588,6 +596,13 @@ def cmd_liquidate(args: argparse.Namespace, config: BotConfig) -> int:
     print(f"Closed {len(report.closed)} position(s). Equity now {_money(engine.portfolio.equity)}.")
     for error in report.errors:
         print(f"  error: {error}")
+    if engine.portfolio.open_positions:
+        held = ", ".join(p.token.symbol or p.token.address[:8]
+                         for p in engine.portfolio.open_positions)
+        print(f"\n  Still holding: {held}")
+        print("  Try again with a wider tolerance, e.g. --max-slippage-bps 3000 (30%).")
+        print("  If the swap program keeps refusing the route, the coin itself is the")
+        print("  problem - restore the seed phrase into Phantom and sell it on jup.ag.")
     return 0
 
 
@@ -774,9 +789,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     liquidate = sub.add_parser("liquidate", help="close every open position now")
     liquidate.add_argument("-y", "--yes", action="store_true")
+    liquidate.add_argument("--max-slippage-bps", type=int,
+                           help="accept up to this much slippage to get out "
+                                "(3000 = 30%%); for a coin the normal ceiling "
+                                "cannot shift")
     liquidate.set_defaults(func=cmd_liquidate)
 
-    reset = sub.add_parser("reset", help="wipe paper trading state")
+    reset = sub.add_parser("reset", help="wipe the bot's own trade history")
     reset.add_argument("-y", "--yes", action="store_true")
     reset.set_defaults(func=cmd_reset)
 

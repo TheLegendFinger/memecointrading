@@ -213,3 +213,99 @@ def test_only_pre_flight_refusals_count_as_safe_to_repeat(message, retryable):
     from memebot.execution.live import is_preflight_failure
 
     assert is_preflight_failure(message) is retryable
+
+
+# ---- a route the program refuses is not a stale price ----------------------------
+def program_error(hex_code):
+    return {"code": -32002, "message": "Transaction simulation failed",
+            "data": {"logs": [f"Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 "
+                              f"failed: custom program error: {hex_code}"]}}
+
+
+def test_an_unknown_program_error_is_reported_by_number_not_guessed_at():
+    """0x1788 is Jupiter error 6024. Naming it from memory would be inventing
+    a fact; the number is enough to look it up."""
+    line = describe_rpc_error("sendTransaction", program_error("0x1788"))
+
+    assert "Jupiter error 6024" in line and "0x1788" in line
+    assert "this route will keep failing" in line
+
+
+def test_a_refused_route_is_not_re_quoted():
+    """The bug in the report: every -32002 was treated as a stale price, so a
+    route the program had refused was quoted again and refused again."""
+    from memebot.execution.live import is_preflight_failure, is_worth_requoting
+
+    line = describe_rpc_error("sendTransaction", program_error("0x1788"))
+
+    assert is_preflight_failure(line) is True, "nothing reached the network"
+    assert is_worth_requoting(line) is False, "but the same route will fail again"
+
+
+def test_a_stale_price_is_still_re_quoted():
+    from memebot.execution.live import is_worth_requoting
+
+    line = describe_rpc_error("sendTransaction", program_error("0x1771"))
+    assert is_worth_requoting(line) is True
+
+
+def test_a_plain_simulation_failure_is_re_quoted():
+    from memebot.execution.live import is_worth_requoting
+
+    line = describe_rpc_error("sendTransaction", simulation_error("Transaction too large"))
+    assert is_worth_requoting(line) is True
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("custom program error: 0x1788", "0x1788"),
+    ("custom program error:0X1771", "0x1771"),
+    ("nothing here", None),
+])
+def test_the_hex_code_is_pulled_out_of_the_message(text, expected):
+    from memebot.execution.live import custom_program_error_code
+
+    assert custom_program_error_code(text) == expected
+
+
+def test_the_exit_plan_asks_for_a_different_route_after_the_first_refusal(config):
+    """Widening and splitting do nothing for a route the program refuses."""
+    from memebot.engine import TradingEngine
+    from memebot.storage import Storage
+    from conftest import FakeDexScreener
+
+    engine = TradingEngine(config, storage=Storage(":memory:"), data=FakeDexScreener([]))
+    plan = engine._exit_plan(None)
+
+    assert plan[0][2] is False, "the first attempt uses the best route available"
+    assert any(direct for _, _, direct in plan[1:]), "a later one asks for a direct route"
+
+
+def test_a_direct_route_request_reaches_jupiter(config):
+    """The order carries it, or the fallback is the same attempt twice."""
+    from memebot.execution.live import LiveExecutor
+    from memebot.models import Order, Side, Token
+
+    asked = []
+
+    class Jupiter:
+        def quote(self, in_mint, out_mint, amount, slippage_bps,
+                  only_direct_routes=False, max_accounts=None):
+            asked.append((only_direct_routes, max_accounts))
+            return None
+
+        def to_base_units(self, mint, amount):
+            return 1_000_000
+
+    executor = LiveExecutor.__new__(LiveExecutor)
+    executor.cfg = config.execution
+    executor.config = config
+    executor.jupiter = Jupiter()
+    executor._quote_price_usd = lambda: 150.0
+
+    order = Order(token=Token(address="mint-1", symbol="X"), side=Side.SELL,
+                  reference_price=1.0, token_amount=10.0,
+                  only_direct_routes=True, max_accounts=32)
+    fill = executor._execute(order)
+
+    assert asked == [(True, 32)]
+    assert "no direct route found" in fill.error

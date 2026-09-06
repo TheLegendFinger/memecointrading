@@ -349,3 +349,39 @@ def test_the_reserve_is_what_the_wallet_holds_back(config):
     tradable = executor.available_cash_usd()
 
     assert tradable == pytest.approx((0.4 - config.fee_reserve_sol) * 150.0)
+
+
+def test_liquidate_can_be_told_to_accept_a_worse_price(config, hot_pair, monkeypatch, capsys):
+    """A coin the 15% ceiling cannot shift is exactly when you want to raise
+    it, and editing a config file mid-panic is not a workflow."""
+    from argparse import Namespace
+
+    from memebot import cli
+
+    engine, _ = build(config, [hot_pair])
+    engine.run_cycle()
+    monkeypatch.setattr(cli, "_build_engine", lambda cfg, on_cycle=None: engine)
+
+    cli.cmd_liquidate(Namespace(yes=True, max_slippage_bps=3000), config)
+
+    assert config.execution.max_exit_slippage_bps == 3000
+    assert "expect a poor price" in capsys.readouterr().out
+
+
+def test_liquidate_says_what_to_do_when_a_coin_will_not_sell(config, hot_pair,
+                                                             monkeypatch, capsys):
+    from argparse import Namespace
+
+    from memebot import cli
+
+    engine, _ = build(config, [hot_pair])
+    engine.run_cycle()
+    engine.executor = Refusing(engine.executor, needs_bps=99_000)
+    monkeypatch.setattr(cli, "_build_engine", lambda cfg, on_cycle=None: engine)
+
+    cli.cmd_liquidate(Namespace(yes=True, max_slippage_bps=None), config)
+
+    out = capsys.readouterr().out
+    assert "Still holding: SOLCAT" in out
+    assert "--max-slippage-bps" in out
+    assert "jup.ag" in out

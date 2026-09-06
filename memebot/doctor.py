@@ -302,6 +302,36 @@ def _run_checks(
 
         report.run("on-chain safety reader", check_safety_reader)
 
+    # ---- what a trade costs -------------------------------------------------
+    def check_trade_size():
+        """Is the smallest allowed position big enough to survive its own fees?
+
+        Most of the cost of a swap is flat - network fee, priority fee, the
+        rent for a new token account - so it does not shrink with the trade.
+        Halve the position and the fees stay put; at some size the round trip
+        costs more than the move you are trading for.
+        """
+        e = config.execution
+        flat = e.network_fee_usd + e.priority_fee_usd
+        smallest = config.risk.min_position_usd
+        # In and out: two swaps, each a flat cost plus the venue's percentage.
+        round_trip = 2 * flat + 2 * smallest * (e.fee_bps / 10_000.0)
+        share = round_trip / smallest if smallest > 0 else float("inf")
+        detail = (
+            f"smallest position ${smallest:,.2f}; a round trip costs about "
+            f"${round_trip:.2f} ({share * 100:.0f}% of it)"
+        )
+        if share >= 0.5:
+            return WARN, detail + (
+                f" - it has to gain {share * 100:.0f}% just to break even. "
+                "Raise risk.min_position_usd, or lower the priority fee."
+            )
+        if share >= 0.15:
+            return WARN, detail + " - fees are a large share of a trade this size"
+        return OK, detail
+
+    report.run("trade size vs fees", check_trade_size)
+
     # ---- trading readiness -------------------------------------------------
     def check_execution():
         """Is this setup able to trade - wallet, RPC, funds?

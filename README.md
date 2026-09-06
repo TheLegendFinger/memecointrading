@@ -37,7 +37,7 @@ time, then opens a menu — everything is a number:
 ```
   ╋╋╋╋╋╋╋╋╋╋┏┓╋╋┏┓
   ┏━━┳━┳━━┳━┫┗┳━┫┗┓
-  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.5.0
+  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.5.1
   ┗┻┻┻━┻┻┻┻━┻━┻━┻━┛   LIVE - real money
 
    $1,043.18 · $812.40 cash · 2 open · +4.32%
@@ -471,6 +471,7 @@ Worth tuning first:
 | `data.use_trending_pools` | `true` | Discovery by trading activity rather than by name. Turning it off narrows the scan to text matching. |
 | `data.max_candidates` | `400` | How many pairs a cycle scores. |
 | `risk.position_size_pct` | `0.08` | Fraction of equity per position. |
+| `risk.min_position_usd` | `1` | Smallest position worth opening. Swap costs are mostly flat, so at $1 a round trip is most of the trade — `doctor` prints the number. |
 | `risk.stop_loss_pct` | `0.20` | Too tight and you get stopped out of every winner. |
 | `filters.min_liquidity_usd` | `25000` | The single most effective rug filter. |
 | `safety.max_top10_holder_pct` | `0.40` | Share of supply the ten biggest non-pool accounts may hold. |

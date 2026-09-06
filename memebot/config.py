@@ -169,7 +169,10 @@ class RiskConfig:
     max_open_positions: int = 5
     # Size each entry as a fraction of current equity.
     position_size_pct: float = 0.08
-    min_position_usd: float = 10.0
+    # The smallest position worth opening. Fees are mostly flat per swap, so
+    # the smaller this is the larger a share of it they take - see the round
+    # trip cost the health check prints.
+    min_position_usd: float = 1.0
     max_position_usd: float = 250.0
     # Never take more than this share of the pool's liquidity.
     max_position_pct_of_liquidity: float = 0.005
@@ -430,6 +433,7 @@ LEGACY_EXAMPLE_FINGERPRINTS = {
     "937ebaca630dc6889badccc7bf808b9bfdfbef9438f62d2653f9606d05fb4207",
     "1022bd193340be32ec30ad9c9d95e6ed70ee19ae53fb462788ecc28429d788a3",
     "bb4e33b2451470fa3e43dd96e3917b241cb08001f961d6e84ec7ff274cebe396",
+    "a2335ab77fe9f423154f46be85f949451cb60f799cd376dcdfb1d5ff571c9810",
 }
 
 

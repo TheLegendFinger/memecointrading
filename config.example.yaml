@@ -97,7 +97,7 @@ risk:
 
   max_open_positions: 3
   position_size_pct: 0.20        # 20% of a small bankroll per position
-  min_position_usd: 5            # below this a swap's fees eat the trade
+  min_position_usd: 1            # the smallest trade worth opening
   max_position_usd: 25           # hard ceiling per position - raise slowly
   max_position_pct_of_liquidity: 0.002   # never be more than 0.2% of the pool
   cash_reserve_pct: 0.10

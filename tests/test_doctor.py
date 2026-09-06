@@ -185,3 +185,28 @@ def test_report_formatting_lists_every_check(config, armed):
     for name in ("config", "state store", "dexscreener search", "jupiter price"):
         assert name in text
     assert "[PASS]" in text
+
+
+# ---- what a trade costs ----------------------------------------------------------
+def test_a_tiny_minimum_position_is_flagged_against_its_fees(config, armed):
+    """Swap costs are mostly flat, so they do not shrink with the trade."""
+    config.risk.min_position_usd = 1.0
+    dex, jup = healthy_clients()
+
+    report = run_checks(config, deep=False, data=dex, jupiter=jup)
+    check = next(c for c in report.checks if c.name == "trade size vs fees")
+
+    assert check.status == WARN
+    assert "break even" in check.detail
+    assert report.healthy, "the user's call to make, not an outage"
+
+
+def test_a_sensible_minimum_position_passes(config, armed):
+    config.risk.min_position_usd = 25.0
+    dex, jup = healthy_clients()
+
+    report = run_checks(config, deep=False, data=dex, jupiter=jup)
+    check = next(c for c in report.checks if c.name == "trade size vs fees")
+
+    assert check.status == OK
+    assert "round trip costs about" in check.detail

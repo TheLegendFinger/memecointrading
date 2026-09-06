@@ -130,7 +130,16 @@ risk:
   reentry_cooldown_minutes: 180
 
 execution:
-  slippage_bps: 200              # 2%: memecoin swaps revert below this
+  slippage_bps: 200              # 2% on BUYS: memecoin swaps revert below this
+  # Exits are not buys. A buy that does not happen costs nothing; an exit that
+  # does not happen leaves you holding a coin the bot decided to be out of.
+  exit_slippage_bps: 500         # selling starts here...
+  max_exit_slippage_bps: 1500    # ...and widens to here before splitting
+  exit_attempts: 3               # widen, widen again, then sell in halves
+  exit_retry_seconds: 30         # after a refused exit, wait before retrying
+  # Before buying, ask what selling it straight back would cost. A coin you
+  # cannot get out of is not a trade.
+  check_exit_route: true
   fee_bps: 25
   # A higher priority fee lands more transactions when the network is busy.
   # 0.0003 SOL-ish per swap at 300k microlamports.

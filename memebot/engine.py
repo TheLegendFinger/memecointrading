@@ -102,6 +102,8 @@ class TradingEngine:
         self._next_scan_at: Optional[float] = None
         self._clock = time.monotonic
         self.last_candidates: List = []
+        # token address -> the time an exit may be attempted again.
+        self._exit_retry_after: Dict[str, float] = {}
         # Called after every cycle. The console live view uses this to redraw;
         # a failure in it must never stop the bot trading.
         self.on_cycle = on_cycle
@@ -206,33 +208,74 @@ class TradingEngine:
                 log.debug("Could not record a price sample: %s", exc)
         return snapshots
 
-    def _close_position(self, position: Position, reason: str, report: CycleReport) -> None:
-        price = position.last_price or position.avg_price
-        order = Order(
-            token=position.token,
-            side=Side.SELL,
-            reference_price=price,
-            token_amount=position.quantity,
-            slippage_bps=self.config.execution.slippage_bps,
-            reason=reason,
-        )
-        fill = self.executor.execute(order)
-        if not fill.ok:
-            log.warning("SELL %s failed: %s", position.token, fill.error)
-            self.emit("error", f"Sell {position.token.symbol} failed", level="error",
-                      symbol=position.token.symbol, address=position.token.address,
-                      detail=fill.error)
-            report.errors.append(f"sell {position.token.symbol}: {fill.error}")
-            return
+    def _exit_plan(self, position: Position) -> List[tuple]:
+        """Ways to get out, in order of preference: (tolerance_bps, fraction).
 
+        A pool that cannot take the whole position at 5% may well take half of
+        it, because impact scales with size. So widen once, then start
+        halving - rather than refusing to sell and holding a coin the bot has
+        already decided to be out of.
+        """
+        e = self.config.execution
+        start = max(e.exit_slippage_bps, e.slippage_bps)
+        ceiling = max(e.max_exit_slippage_bps, start)
+        plan = [(start, 1.0), (ceiling, 1.0), (ceiling, 0.5), (ceiling, 0.25)]
+        return plan[: max(1, e.exit_attempts)]
+
+    def _close_position(self, position: Position, reason: str, report: CycleReport) -> None:
+        """Sell out of a position, widening and then splitting if the pool is
+        too thin to take it in one go."""
+        price = position.last_price or position.avg_price
+        address = position.token.address
+        symbol = position.token.symbol or address[:8]
+        last_error = ""
+
+        for tolerance, fraction in self._exit_plan(position):
+            amount = position.quantity * fraction
+            if amount <= 0:
+                break
+            order = Order(
+                token=position.token,
+                side=Side.SELL,
+                reference_price=price,
+                token_amount=amount,
+                slippage_bps=tolerance,
+                reason=reason if fraction >= 1.0 else f"{reason} (selling {fraction:.0%})",
+            )
+            fill = self.executor.execute(order)
+            if fill.ok:
+                self._book_exit(position, fill, reason, report, fraction)
+                self._exit_retry_after.pop(address, None)
+                return
+            last_error = fill.error or "unknown error"
+            log.info("Exit attempt for %s at %dbps x%.2f failed: %s",
+                     symbol, tolerance, fraction, last_error)
+
+        # Every route out was refused. Back off rather than retrying on the
+        # next tick: the pool will not have changed in five seconds, and a
+        # wall of identical failures hides everything else in the feed.
+        wait = self.config.execution.exit_retry_seconds
+        self._exit_retry_after[address] = time.time() + wait
+        log.warning("SELL %s failed: %s - retrying in %.0fs", symbol, last_error, wait)
+        self.emit("error", f"Could not sell {symbol}", level="error",
+                  symbol=symbol, address=address,
+                  detail=f"{last_error} | retrying in {wait:.0f}s")
+        report.errors.append(f"sell {symbol}: {last_error}")
+
+    def _book_exit(self, position: Position, fill: Fill, reason: str,
+                   report: CycleReport, fraction: float) -> None:
         realized = self.portfolio.apply_fill(fill)
         self.risk.record_close(realized)
         report.closed.append(fill)
-        self._record_exit(position, realized, reason)
+        # Only a finished trade goes to the learner. Booking a half-sale as the
+        # outcome would teach it from half a result.
+        if not self.portfolio.has_position(position.token.address):
+            self._record_exit(position, realized, reason)
+        partial = "" if fraction >= 1.0 else f" ({fraction:.0%} of it - the pool was too thin)"
         self.emit(
             "sell",
             f"Sold {position.token.symbol} for ${fill.usd_amount - fill.fee_usd:,.2f} "
-            f"({realized:+,.2f})",
+            f"({realized:+,.2f}){partial}",
             symbol=position.token.symbol, address=position.token.address,
             level="win" if realized > 0 else "loss",
             detail=reason,
@@ -246,8 +289,13 @@ class TradingEngine:
 
     def manage_positions(self, report: CycleReport) -> None:
         snapshots = self._refresh_positions()
+        now = time.time()
         for position in list(self.portfolio.open_positions):
             pair = snapshots.get(position.token.address)
+            retry_at = self._exit_retry_after.get(position.token.address)
+            if retry_at is not None and now < retry_at:
+                report.note_skip("waiting to retry an exit")
+                continue
 
             decision = self.risk.evaluate_exit(position, pair)
             if decision.should_exit:

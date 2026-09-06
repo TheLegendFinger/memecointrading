@@ -37,7 +37,7 @@ time, then opens a menu — everything is a number:
 ```
   ╋╋╋╋╋╋╋╋╋╋┏┓╋╋┏┓
   ┏━━┳━┳━━┳━┫┗┳━┫┗┓
-  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.6.1
+  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.7.0
   ┗┻┻┻━┻┻┻┻━┻━┻━┻━┛   LIVE - real money
 
    $1,043.18 · $812.40 cash · 2 open · +4.32%
@@ -404,6 +404,30 @@ buckets someone wrote down, and if the market regime changes underneath it, it
 will keep believing the old one for a while — which is exactly why the cap
 exists. `reset` clears this history along with the rest of the book.
 
+### Getting out
+
+Entries and exits are not symmetric, and treating them as if they were is how a
+bot ends up holding something it has already decided to sell. A buy that does
+not happen costs nothing. An exit that does not happen costs you whatever the
+coin does next.
+
+So selling is allowed to be more expensive than buying. `slippage_bps` (2%)
+applies to buys; exits start at `exit_slippage_bps` (5%) and, if the pool will
+not take the position at that price, widen to `max_exit_slippage_bps` (15%) and
+then sell **in halves** — impact scales with size, so half a position often goes
+where all of it will not. A part sale leaves the rest open and the next tick
+takes another run at it.
+
+When every route out is refused, the bot backs off for `exit_retry_seconds`
+rather than retrying on the next five-second tick. Twelve identical failures a
+minute is not persistence, it is a wall of noise hiding everything else in the
+feed.
+
+And before buying at all, it asks Jupiter what selling the position straight
+back would cost (`check_exit_route`). DexScreener reports the whole pool; what
+matters is what the route can actually absorb, and on thin or fragmented pools
+those are different numbers. A coin that cannot be sold is not a trade.
+
 ## What an order actually does
 
 Per order, live mode requests a Jupiter route → rejects it if price impact
@@ -511,7 +535,9 @@ Worth tuning first:
 | `learning.min_trades` | `30` | Closed trades before anything learned is applied. |
 | `learning.max_adjustment` | `0.10` | The hard cap on the whole learned tilt. |
 | `filters.min_age_minutes` | `20` | Lower to catch launches earlier, at much higher risk. |
-| `execution.slippage_bps` | `150` | Too low and orders revert; too high and you get sandwiched. |
+| `execution.slippage_bps` | `150` | On buys. Too low and orders revert; too high and you get sandwiched. |
+| `execution.exit_slippage_bps` | `500` | On sells. Never tighter than the buy tolerance — getting out must not be harder than getting in. |
+| `execution.check_exit_route` | `true` | Quote the way out before buying, and skip coins that cannot be sold back. |
 
 `config.yaml` is your copy of `config.example.yaml`, and while you have not
 edited it, it is kept in step with the recommended settings automatically -

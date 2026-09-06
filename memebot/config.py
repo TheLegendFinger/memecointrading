@@ -205,8 +205,24 @@ class RiskConfig:
 
 @dataclass
 class ExecutionConfig:
-    # Slippage tolerance sent to the aggregator / assumed when simulating.
+    # Slippage tolerance sent to the aggregator, for BUYS.
     slippage_bps: int = 150
+    # Exits are not buys. A buy that does not happen costs nothing; an exit
+    # that does not happen leaves you holding a coin you decided to be out of,
+    # while it keeps falling. So selling starts wider...
+    exit_slippage_bps: int = 500
+    # ...and, when the pool cannot take the whole position at that price,
+    # widens again and then sells in halves rather than giving up.
+    max_exit_slippage_bps: int = 1500
+    # How many times an exit may widen or split before it waits and retries.
+    exit_attempts: int = 3
+    # After a failed exit, how long before trying that coin again. Without
+    # this, a 5-second position tick retries a doomed sell twelve times a
+    # minute and fills the feed with identical failures.
+    exit_retry_seconds: float = 30.0
+    # Before buying, ask what selling the position straight back would cost.
+    # A coin you cannot get out of is not a trade, it is a donation.
+    check_exit_route: bool = True
     # Swap fee charged by the venue (Raydium/Orca style pools ~0.25%).
     fee_bps: int = 25
     # Flat per-swap network + priority fee, in USD, used by the paper model.
@@ -272,6 +288,15 @@ class BotConfig:
             errors.append("risk.stop_loss_pct must be in (0, 1)")
         if self.execution.slippage_bps < 0 or self.execution.slippage_bps > 5000:
             errors.append("execution.slippage_bps must be in [0, 5000]")
+        if self.execution.exit_slippage_bps < self.execution.slippage_bps:
+            errors.append(
+                "execution.exit_slippage_bps cannot be tighter than slippage_bps - "
+                "getting out must never be harder than getting in"
+            )
+        if self.execution.max_exit_slippage_bps < self.execution.exit_slippage_bps:
+            errors.append(
+                "execution.max_exit_slippage_bps cannot be below exit_slippage_bps"
+            )
         if self.strategy.min_score < 0:
             errors.append("strategy.min_score must be >= 0")
         for name in ("max_single_holder_pct", "max_top10_holder_pct"):
@@ -457,6 +482,7 @@ LEGACY_EXAMPLE_FINGERPRINTS = {
     "a2335ab77fe9f423154f46be85f949451cb60f799cd376dcdfb1d5ff571c9810",
     "7f9fd0c0e716485c8a8d2a037857f9e84c631a26e900ad3f6d103a30a12c71d5",
     "15b31b6f9d53be5c55bb65f28fc33c3f7eea8ba5f47fc9c376cbf515df06655e",
+    "b4964395c35dc7813a0029c4deb10fa93d352c55ad0fe836edb9aa51204bb6c3",
 }
 
 

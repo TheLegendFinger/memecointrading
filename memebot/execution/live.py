@@ -256,6 +256,33 @@ class LiveExecutor(Executor):
         return self._pubkey
 
     # ---- helpers ---------------------------------------------------------------
+    def _exit_would_be_blocked(self, buy_quote) -> Optional[str]:
+        """Ask what selling this position straight back would cost.
+
+        DexScreener's reported liquidity is the whole pool; what matters is
+        what the route can actually absorb, and the two part company on thin
+        or fragmented pools. Quoting the round trip before committing is the
+        difference between a trade and a donation - and it is the check that
+        would have kept the bot out of the position it later could not sell.
+        """
+        ceiling = max(self.cfg.max_exit_slippage_bps, self.cfg.exit_slippage_bps)
+        try:
+            back = self.jupiter.quote(
+                buy_quote.output_mint, buy_quote.input_mint,
+                buy_quote.out_amount, ceiling,
+            )
+        except HttpError as exc:
+            log.debug("Could not quote the way out: %s", exc)
+            return None      # do not block a buy because a quote timed out
+        if back is None:
+            return "no route back out - the position could not be sold"
+        if back.price_impact_pct > ceiling / 100.0:
+            return (
+                f"selling it back would cost {back.price_impact_pct:.2f}%, over the "
+                f"{ceiling / 100.0:.2f}% exit ceiling - too thin to get out of"
+            )
+        return None
+
     def _quote_price_usd(self) -> float:
         """USD price of the quote currency we hold (SOL or a stablecoin)."""
         price = self.jupiter.price(self.cfg.quote_mint)
@@ -454,6 +481,11 @@ class LiveExecutor(Executor):
                     f"{slippage_bps / 100.0:.2f}%"
                 ),
             )
+
+        if order.side is Side.BUY and self.cfg.check_exit_route:
+            blocked = self._exit_would_be_blocked(quote)
+            if blocked:
+                return Fill(order=order, ok=False, error=blocked)
 
         swap = self.jupiter.swap_transaction(
             quote,

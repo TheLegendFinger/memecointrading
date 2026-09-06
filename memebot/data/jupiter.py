@@ -132,22 +132,38 @@ class JupiterClient:
         self._decimals: Dict[str, int] = {WSOL_MINT: 9, USDC_MINT: 6}
 
     # ---- metadata --------------------------------------------------------------
-    def decimals(self, mint: str, default: int = 9) -> int:
-        """Token decimals, cached. Falls back to `default` if metadata is missing."""
+    def lookup_decimals(self, mint: str) -> Optional[int]:
+        """Token decimals from metadata, or None if it cannot be established.
+
+        None rather than a guess. Decimals are an exponent: assuming 9 for a
+        6-decimal token asks to sell a thousand times what the wallet holds,
+        and every route refuses it - which is exactly the failure this method's
+        old silent `default=9` produced on every sell the bot ever tried.
+        """
         if mint in self._decimals:
             return self._decimals[mint]
         try:
             data = self.http.get(f"{TOKEN_METADATA_URL}/{mint}")
         except HttpError as exc:
-            log.debug("Token metadata lookup failed for %s: %s", mint, exc)
-            return default
+            log.warning("Token metadata lookup failed for %s: %s", mint, exc)
+            return None
         value = (data or {}).get("decimals")
         try:
             decimals = int(value)
         except (TypeError, ValueError):
-            return default
+            log.warning("Token metadata for %s carried no decimals", mint)
+            return None
         self._decimals[mint] = decimals
         return decimals
+
+    def decimals(self, mint: str, default: int = 9) -> int:
+        """Token decimals, cached, falling back to `default`.
+
+        Only safe where being wrong is cosmetic. Anything that sizes an order
+        must use a figure read from the chain - see LiveExecutor.token_decimals.
+        """
+        found = self.lookup_decimals(mint)
+        return default if found is None else found
 
     def set_decimals(self, mint: str, decimals: int) -> None:
         self._decimals[mint] = int(decimals)

@@ -325,6 +325,43 @@ def _run_checks(
 
         report.run("chain: holder concentration", check_holders)
 
+    # ---- decimals, the one number that must never be guessed ---------------
+    def check_decimals():
+        """Can the bot establish a token's decimals?
+
+        This is the check that would have caught the bug where every sell
+        failed: the metadata endpoint had gone, the lookup fell back to a
+        default of 9, and a 6-decimal coin was sold in thousand-times units
+        that no route would accept. Both sources are probed, because the
+        fallback is only a fallback if it works.
+        """
+        from .execution import build_executor
+
+        executor = build_executor(config, data=data, jupiter=jupiter)
+        metadata = jupiter.lookup_decimals(USDC_MINT)
+        rpc = getattr(executor, "rpc", None)
+        chain = None
+        if rpc is not None:
+            try:
+                chain = (rpc.get_mint_account(USDC_MINT) or {}).get("decimals")
+            except HttpError as exc:
+                log.debug("Mint account read failed: %s", exc)
+
+        if chain == 6:
+            note = "read from the mint account"
+            if metadata != 6:
+                note += "; Jupiter's token metadata is not answering, which is fine"
+            return OK, f"USDC reads as 6 decimals - {note}"
+        if metadata == 6:
+            return WARN, ("decimals come from Jupiter metadata only - the chain read "
+                          "is not working, so a coin missing from Jupiter cannot be traded")
+        return FAIL, (
+            "cannot establish token decimals from either the chain or Jupiter. "
+            "Sells will be refused rather than sent at a guessed size"
+        )
+
+    report.run("token decimals", check_decimals)
+
     # ---- what a trade costs -------------------------------------------------
     def check_trade_size():
         """Is the smallest allowed position big enough to survive its own fees?

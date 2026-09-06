@@ -210,3 +210,35 @@ def test_a_sensible_minimum_position_passes(config, armed):
 
     assert check.status == OK
     assert "round trip costs about" in check.detail
+
+
+# ---- decimals --------------------------------------------------------------------
+def test_the_health_check_catches_unknowable_decimals(config, monkeypatch):
+    """The bug it exists for: a dead metadata endpoint, a silent default of 9,
+    and every sell asking for a thousand times the balance."""
+    stub_live_chain(monkeypatch)
+    monkeypatch.setattr("memebot.execution.live.SolanaRpc.get_mint_account",
+                        lambda self, mint: {})
+    dex, jup = healthy_clients()
+    monkeypatch.setattr(jup, "lookup_decimals", lambda mint: None, raising=False)
+
+    report = run_checks(config, deep=False, data=dex, jupiter=jup)
+    check = next(c for c in report.checks if c.name == "token decimals")
+
+    assert check.status == FAIL
+    assert "guessed size" in check.detail
+
+
+def test_the_chain_read_alone_is_enough(config, monkeypatch):
+    """Jupiter's metadata endpoint being gone is survivable; the chain is not."""
+    stub_live_chain(monkeypatch)
+    monkeypatch.setattr("memebot.execution.live.SolanaRpc.get_mint_account",
+                        lambda self, mint: {"decimals": 6})
+    dex, jup = healthy_clients()
+    monkeypatch.setattr(jup, "lookup_decimals", lambda mint: None, raising=False)
+
+    report = run_checks(config, deep=False, data=dex, jupiter=jup)
+    check = next(c for c in report.checks if c.name == "token decimals")
+
+    assert check.status == OK
+    assert "mint account" in check.detail

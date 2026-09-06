@@ -37,7 +37,7 @@ time, then opens a menu — everything is a number:
 ```
   ╋╋╋╋╋╋╋╋╋╋┏┓╋╋┏┓
   ┏━━┳━┳━━┳━┫┗┳━┫┗┓
-  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.7.3
+  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.8.0
   ┗┻┻┻━┻┻┻┻━┻━┻━┻━┛   LIVE - real money
 
    $1,043.18 · $812.40 cash · 2 open · +4.32%
@@ -321,6 +321,20 @@ only ever contributes *names to look at*, never a number the bot trades on.
 `scan` shows which feed found each coin in its `FOUND BY` column, and `doctor`
 prints the per-feed breakdown. If everything says `search`, the pool feeds are
 unreachable and discovery has quietly narrowed to name matching.
+
+### Decimals
+
+Order sizes are denominated in a token's smallest unit, and how many of those
+make one token is a per-token exponent. Getting it wrong is not a rounding
+error: assume 9 for a coin that has 6 and every sell asks for a *thousand
+times* what the wallet holds, which every route refuses, at every size, on
+every attempt.
+
+So the number is never guessed. It comes from the token's mint account, read
+through the same RPC everything else uses, with Jupiter's metadata as a cache
+in front. If neither can answer, the order is refused rather than sent at a
+guessed size, and `doctor` has a `token decimals` line that fails loudly rather
+than letting a dead metadata endpoint hide behind a default.
 
 ### What the on-chain check looks at
 

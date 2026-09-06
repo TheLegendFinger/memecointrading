@@ -31,6 +31,12 @@ class FakeJupiter:
     def decimals(self, mint, default=9):
         return self._decimals.get(mint, default)
 
+    def lookup_decimals(self, mint):
+        return self._decimals.get(mint)
+
+    def set_decimals(self, mint, decimals):
+        self._decimals[mint] = int(decimals)
+
     def to_base_units(self, mint, amount):
         return int(round(amount * 10 ** self.decimals(mint)))
 
@@ -61,12 +67,17 @@ class FakeRpc:
             "mintAuthority": None, "freezeAuthority": None, "decimals": 6,
         }
         self.supply = supply
+        # Plenty, so a test that is not about balance capping is not capped.
+        self.token_balance = 1e18
         self.holders = holders if holders is not None else [
             10_000.0, 8_000.0, 6_000.0, 5_000.0, 4_000.0,
         ]
 
     def get_mint_account(self, mint):
         return self.mint_info
+
+    def get_token_balance(self, owner, mint):
+        return self.token_balance
 
     def get_token_supply(self, mint):
         return self.supply

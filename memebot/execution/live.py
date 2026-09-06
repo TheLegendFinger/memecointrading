@@ -374,6 +374,55 @@ class LiveExecutor(Executor):
         return self._pubkey
 
     # ---- helpers ---------------------------------------------------------------
+    def token_decimals(self, mint: str) -> int:
+        """Decimals for `mint`, read from the chain and cached.
+
+        Not optional and not guessable. Decimals are an exponent: assume 9 for
+        a 6-decimal coin - which most memecoins are - and every sell asks for a
+        thousand times the balance and is refused by every route, at every
+        size, on every attempt. The mint account is the authority, the same one
+        the safety check already reads, so this costs nothing extra.
+        """
+        cached = self.jupiter.lookup_decimals(mint)
+        if cached is not None:
+            return cached
+        try:
+            info = self.rpc.get_mint_account(mint)
+        except Exception as exc:  # noqa: BLE001 - any failure here is the same failure
+            raise LiveExecutionError(
+                f"cannot read how many decimals {mint} has ({exc}), so any order "
+                "size would be a guess - refusing to send one"
+            ) from exc
+        value = (info or {}).get("decimals")
+        try:
+            decimals = int(value)
+        except (TypeError, ValueError):
+            raise LiveExecutionError(
+                f"cannot establish how many decimals {mint} has, so any order "
+                "size would be a guess - refusing to send one"
+            ) from None
+        self.jupiter.set_decimals(mint, decimals)
+        return decimals
+
+    def sellable_amount(self, mint: str, wanted: float) -> float:
+        """`wanted`, capped at what the wallet actually holds.
+
+        Bookkeeping drifts from the chain - a transfer fee, a partial fill, a
+        rounding - and asking to sell more than you have fails the whole swap
+        rather than selling what is there.
+        """
+        try:
+            held = self.rpc.get_token_balance(self.wallet_address, mint)
+        except Exception as exc:  # noqa: BLE001 - never block an exit on a read
+            log.warning("Could not read the %s balance, selling the booked amount: %s",
+                        mint, exc)
+            return wanted
+        if held <= 0:
+            raise LiveExecutionError(
+                f"the wallet holds none of {mint} - nothing to sell"
+            )
+        return min(wanted, held)
+
     def _exit_would_be_blocked(self, buy_quote) -> Optional[str]:
         """Ask what selling this position straight back would cost.
 
@@ -589,12 +638,18 @@ class LiveExecutor(Executor):
         token_mint = order.token.address
         slippage_bps = order.slippage_bps or self.cfg.slippage_bps
 
+        # Establish the token's real decimals before anything is sized on them.
+        token_dp = self.token_decimals(token_mint)
+
         if order.side is Side.BUY:
             in_mint, out_mint = quote_mint, token_mint
             in_amount = self.jupiter.to_base_units(quote_mint, order.usd_amount / quote_price)
         else:
             in_mint, out_mint = token_mint, quote_mint
-            in_amount = self.jupiter.to_base_units(token_mint, order.token_amount)
+            amount = self.sellable_amount(token_mint, order.token_amount)
+            # Truncate rather than round: rounding up by one base unit asks for
+            # a token the wallet does not have, and the swap fails entirely.
+            in_amount = int(amount * (10 ** token_dp))
 
         if in_amount <= 0:
             return Fill(order=order, ok=False, error="order size rounds to zero base units")

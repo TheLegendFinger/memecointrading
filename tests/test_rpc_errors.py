@@ -293,13 +293,23 @@ def test_a_direct_route_request_reaches_jupiter(config):
             asked.append((only_direct_routes, max_accounts))
             return None
 
+        def lookup_decimals(self, mint):
+            return 6
+
         def to_base_units(self, mint, amount):
             return 1_000_000
+
+    class Rpc:
+        def get_token_balance(self, owner, mint):
+            return 1_000.0
 
     executor = LiveExecutor.__new__(LiveExecutor)
     executor.cfg = config.execution
     executor.config = config
     executor.jupiter = Jupiter()
+    executor.rpc = Rpc()
+    executor._pubkey = "Wallet111"
+    executor._ensure_wallet = lambda: None
     executor._quote_price_usd = lambda: 150.0
 
     order = Order(token=Token(address="mint-1", symbol="X"), side=Side.SELL,

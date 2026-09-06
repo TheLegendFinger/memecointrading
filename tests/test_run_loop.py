@@ -223,3 +223,45 @@ def test_the_stop_words_are_matched_loosely():
 
     for typed in ("stop", "STOP", "  Stop  ", "quit", "exit"):
         assert typed.strip().lower() in STOP_WORDS
+
+
+# ---- the watchlist between scans -------------------------------------------------
+def test_the_watchlist_survives_a_position_tick(config, hot_pair):
+    """The bug: WATCHING vanished every few seconds, because a position tick
+    carries no candidates and the panel rendered from the report alone."""
+    engine, _ = build(config, [hot_pair])
+    view = ConsoleView(force=True)
+    scan = engine.run_cycle()
+    assert "WATCHING" in view.frame(engine, scan)
+
+    tick = engine.run_position_tick()
+
+    assert "WATCHING" in view.frame(engine, tick)
+    assert "BEST" in view.frame(engine, tick)
+
+
+def test_the_watchlist_survives_a_plain_redraw(config, hot_pair):
+    """The countdown redraws once a second with no report at all."""
+    engine, _ = build(config, [hot_pair])
+    view = ConsoleView(force=True)
+    engine.run_cycle()
+
+    assert "WATCHING" in view.frame(engine, None)
+
+
+def test_the_watchlist_says_how_stale_it_is(config, hot_pair):
+    """Between scans it is last-known data, and should not pretend otherwise."""
+    engine, _ = build(config, [hot_pair])
+    view = ConsoleView(force=True)
+    clock = VirtualClock()
+    frames = []
+
+    engine.run(max_cycles=2, sleep=clock.sleep, clock=clock,
+               on_idle=lambda eng: frames.append(view.frame(eng, None)))
+
+    assert any("as of" in f for f in frames)
+
+
+def test_nothing_is_watched_before_the_first_scan(config):
+    engine, _ = build(config, [])
+    assert ConsoleView(force=True).watching(engine, None) == []

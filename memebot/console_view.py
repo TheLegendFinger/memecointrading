@@ -124,12 +124,25 @@ class ConsoleView:
             )
         return lines + [""]
 
-    def watching(self, report) -> List[str]:
-        if not report or not report.top_candidates:
+    def watching(self, engine, report) -> List[str]:
+        """The shortlist from the most recent scan.
+
+        A position tick carries no candidates of its own, and neither does a
+        plain redraw for the countdown, so this falls back to what the last
+        scan found. Otherwise the panel blinks out between scans, which reads
+        as the bot having lost its place.
+        """
+        candidates = (report.top_candidates if report and report.top_candidates
+                      else getattr(engine, "last_candidates", None))
+        if not candidates:
             return []
+        age = getattr(engine, "seconds_to_next_scan", 0.0)
+        interval = max(1.0, float(engine.config.poll_interval_seconds))
+        stamp = f"  (as of {max(0.0, interval - age):.0f}s ago)" if age else ""
         lines = [paint("  WATCHING", DIM, GREY)
-                 + paint("            score      5m       1h   liquidity", DIM, GREY)]
-        for score, pair in report.top_candidates[:4]:
+                 + paint("            score      5m       1h   liquidity", DIM, GREY)
+                 + paint(stamp, DIM, GREY)]
+        for score, pair in candidates[:4]:
             change_m5, change_h1 = pair.change("m5"), pair.change("h1")
             lines.append(
                 "   " + paint(f"{(pair.base.symbol or pair.base.address[:6])[:10]:<10}", WHITE)
@@ -188,7 +201,7 @@ class ConsoleView:
         lines += self.header(engine)
         lines += self.summary(engine)
         lines += self.holdings(engine)
-        lines += self.watching(report)
+        lines += self.watching(engine, report)
         lines += self.activity(engine)
         lines += self.footer(engine)
         return "\n".join(lines)

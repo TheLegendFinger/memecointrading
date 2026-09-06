@@ -17,6 +17,7 @@ from typing import Any, Callable, List, Optional
 from .config import BotConfig
 from .data import DexScreenerClient, build_dexscreener, discover_candidates
 from .data.jupiter import JupiterClient
+from .http import HttpError
 from .models import USDC_MINT, WSOL_MINT
 from .storage import is_postgres_dsn, open_storage
 
@@ -274,11 +275,11 @@ def _run_checks(
 
     # ---- the on-chain safety reader ----------------------------------------
     if config.safety.enabled:
-        def check_safety_reader():
-            """Can the RPC answer the questions the safety check asks?
+        def check_authorities():
+            """The read that decides whether a coin can be bought at all.
 
             Probed against wrapped SOL, whose authorities are revoked and whose
-            supply is public - if that comes back wrong, the reader is broken
+            state is public - if that comes back wrong, the reader is broken
             rather than the token.
             """
             from .execution import build_executor
@@ -291,16 +292,38 @@ def _run_checks(
             if not info or "mintAuthority" not in info:
                 return FAIL, (
                     f"{config.execution.rpc_url} did not return a parsed mint account - "
-                    "on-chain safety checks cannot run against it"
+                    "nothing can be bought, since an unreadable token counts as failed"
                 )
-            supply = rpc.get_token_supply(WSOL_MINT)
-            holders = rpc.get_token_largest_accounts(WSOL_MINT)
-            return OK, (
-                f"mint, supply and holders all readable "
-                f"(wSOL supply {supply:,.0f}, {len(holders)} largest accounts)"
-            )
+            return OK, "mint and freeze authorities readable"
 
-        report.run("on-chain safety reader", check_safety_reader)
+        report.run("chain: token authorities", check_authorities)
+
+        def check_holders():
+            """The optional read. Heavy, and free endpoints often refuse it."""
+            from .execution import build_executor
+
+            executor = build_executor(config, data=data, jupiter=jupiter)
+            rpc = getattr(executor, "rpc", None)
+            if rpc is None:
+                return WARN, "no RPC"
+            try:
+                supply = rpc.get_token_supply(WSOL_MINT)
+                holders = rpc.get_token_largest_accounts(WSOL_MINT)
+            except HttpError as exc:
+                blocked = config.safety.require_holder_data
+                return (FAIL if blocked else WARN), (
+                    f"{exc} | holder concentration will be skipped"
+                    + (" AND every coin refused, because safety.require_holder_data "
+                       "is on - turn it off, or use an RPC that answers "
+                       "getTokenLargestAccounts (Helius, QuickNode, Alchemy)"
+                       if blocked else
+                       " - the authority checks still run, so this only costs a check")
+                )
+            if not holders:
+                return WARN, "the node answered with no holders; concentration is skipped"
+            return OK, f"supply and {len(holders)} largest accounts readable (wSOL {supply:,.0f})"
+
+        report.run("chain: holder concentration", check_holders)
 
     # ---- what a trade costs -------------------------------------------------
     def check_trade_size():

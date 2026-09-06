@@ -37,7 +37,7 @@ time, then opens a menu — everything is a number:
 ```
   ╋╋╋╋╋╋╋╋╋╋┏┓╋╋┏┓
   ┏━━┳━┳━━┳━┫┗┳━┫┗┓
-  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.6.0
+  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.6.1
   ┗┻┻┻━┻┻┻┻━┻━┻━┻━┛   LIVE - real money
 
    $1,043.18 · $812.40 cash · 2 open · +4.32%
@@ -341,10 +341,20 @@ whale makes every healthy token look captured. It is recognised by size:
 DexScreener reports total pool liquidity, so one side is about half of it.
 
 Three RPC calls per token, cached for ten minutes, and only for a coin actually
-about to be bought — not for all four hundred in a scan. If the chain cannot be
-read, the token is treated as having **failed**, not passed
-(`safety.allow_unverified` if you disagree). `scan` shows the verdict in its
-`CHAIN` column for the candidates above your entry threshold.
+about to be bought — not for all four hundred in a scan. `scan` shows the
+verdict in its `CHAIN` column for the candidates above your entry threshold.
+
+The two reads are not equal, and the config treats them differently. The
+**authorities** come from one cheap `getAccountInfo`, which every RPC answers;
+if that read fails the token counts as **failed**, not passed
+(`safety.allow_unverified` if you disagree). **Holder concentration** needs
+`getTokenLargestAccounts`, which the free public endpoint frequently refuses
+outright — so by default a token whose holders cannot be read is still bought
+on the strength of its authorities, and the miss is reported rather than
+treated as a rejection. Blocking every trade because a free endpoint will not
+answer a heavy query is not safety, it is just not trading. Set
+`safety.require_holder_data: true` to demand it, and point `execution.rpc_url`
+at an endpoint that answers (Helius, QuickNode and Alchemy have free tiers).
 
 **What this is not.** It is not a full rug scanner, and passing it does not mean
 a coin is safe. It cannot see whether the LP is locked or burned — finding the
@@ -496,7 +506,8 @@ Worth tuning first:
 | `risk.stop_loss_pct` | `0.20` | Too tight and you get stopped out of every winner. |
 | `filters.min_liquidity_usd` | `25000` | The single most effective rug filter. |
 | `safety.max_top10_holder_pct` | `0.40` | Share of supply the ten biggest non-pool accounts may hold. |
-| `safety.allow_unverified` | `false` | Whether a token whose chain data could not be read is bought anyway. |
+| `safety.allow_unverified` | `false` | Whether a token whose mint account could not be read is bought anyway. |
+| `safety.require_holder_data` | `false` | Whether holder concentration must be readable. On, with a public RPC that refuses the query, nothing is ever bought. |
 | `learning.min_trades` | `30` | Closed trades before anything learned is applied. |
 | `learning.max_adjustment` | `0.10` | The hard cap on the whole learned tilt. |
 | `filters.min_age_minutes` | `20` | Lower to catch launches earlier, at much higher risk. |

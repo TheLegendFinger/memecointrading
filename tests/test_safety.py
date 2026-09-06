@@ -254,3 +254,73 @@ def test_scan_can_skip_the_chain_checks(config, hot_pair, monkeypatch, capsys):
     cli.cmd_scan(Namespace(limit=20, no_safety=True, safety_limit=10), config)
 
     assert rpc.calls == 0, "no RPC calls when the user opted out"
+
+
+# ---- when the node will not answer the heavy query -------------------------------
+class HolderlessRpc(FakeRpc):
+    """Authorities readable, holders refused - what a free public RPC does."""
+
+    def get_token_supply(self, mint):
+        from memebot.http import HttpError
+
+        raise HttpError("getTokenLargestAccounts: POST https://api.mainnet-beta."
+                        "solana.com failed - HTTP 410: method disabled", 410)
+
+    def get_token_largest_accounts(self, mint):
+        return self.get_token_supply(mint)
+
+
+def test_a_coin_is_still_bought_when_only_the_holders_cannot_be_read():
+    """The bug: every candidate was refused because a free RPC would not answer
+    getTokenLargestAccounts, so the bot never bought anything at all."""
+    verdict = check(HolderlessRpc())
+
+    assert verdict.ok is True
+    assert verdict.checked is True
+    assert verdict.holders_read is False
+    assert "holders unknown" in verdict.summary
+
+
+def test_holder_data_can_be_made_mandatory():
+    verdict = check(HolderlessRpc(), require_holder_data=True)
+
+    assert verdict.ok is False
+    assert "holders could not be read" in verdict.summary
+
+
+def test_the_authorities_still_decide_when_holders_are_missing():
+    verdict = check(HolderlessRpc(mint_authority="Deployer111"))
+
+    assert verdict.ok is False
+    assert "supply can be inflated" in verdict.summary
+
+
+def test_an_empty_holder_response_is_not_a_zero_concentration():
+    verdict = check(FakeRpc(supply=0.0, holders=[]))
+
+    assert verdict.ok is True
+    assert verdict.holders_read is False
+    assert verdict.top10_pct == 0.0
+
+
+def test_the_feed_headline_stays_short():
+    """The activity feed truncates at 47 characters, which is how a useful
+    error became 'holders could not be read: POST'."""
+    verdict = check(HolderlessRpc(mint_authority="Deployer111"))
+
+    assert len(f"Skipped WOJAK: {verdict.headline}") < 47
+    assert verdict.headline == "mint authority still active"
+
+
+def test_the_rpc_names_the_call_that_failed():
+    """"POST https://... failed" does not say which query the node refused."""
+    from memebot.execution.live import SolanaRpc
+    from memebot.http import HttpError
+
+    class Refusing:
+        def post(self, url, json_body=None, **kw):
+            raise HttpError(f"POST {url} failed - HTTP 410", 410)
+
+    rpc = SolanaRpc("https://rpc.example", http=Refusing())
+    with pytest.raises(HttpError, match="getTokenLargestAccounts: POST"):
+        rpc.get_token_largest_accounts("mint-1")

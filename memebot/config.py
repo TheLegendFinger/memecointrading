@@ -117,9 +117,16 @@ class SafetyConfig:
     # Share of supply, excluding the pool's own account. 0 disables the check.
     max_single_holder_pct: float = 0.15
     max_top10_holder_pct: float = 0.40
-    # If the chain cannot be read, is the coin bought anyway? Off: an unchecked
-    # token is treated as a failed check, because the failure mode is total.
+    # If the mint account cannot be read at all, is the coin bought anyway?
+    # Off: an unchecked token is treated as a failed check, because the failure
+    # mode is total. That read is one cheap getAccountInfo.
     allow_unverified: bool = False
+    # Holder concentration needs getTokenLargestAccounts, which free public RPC
+    # endpoints often rate-limit or refuse outright. Off by default, a token
+    # whose holders cannot be read is still bought on the strength of its
+    # authorities - blocking every trade because a free endpoint will not
+    # answer a heavy query is not safety, it is just not trading.
+    require_holder_data: bool = False
     cache_seconds: float = 600.0
 
 
@@ -449,6 +456,7 @@ LEGACY_EXAMPLE_FINGERPRINTS = {
     "bb4e33b2451470fa3e43dd96e3917b241cb08001f961d6e84ec7ff274cebe396",
     "a2335ab77fe9f423154f46be85f949451cb60f799cd376dcdfb1d5ff571c9810",
     "7f9fd0c0e716485c8a8d2a037857f9e84c631a26e900ad3f6d103a30a12c71d5",
+    "15b31b6f9d53be5c55bb65f28fc33c3f7eea8ba5f47fc9c376cbf515df06655e",
 }
 
 

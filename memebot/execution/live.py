@@ -93,7 +93,13 @@ class SolanaRpc:
     def call(self, method: str, params: list) -> Any:
         self._id += 1
         body = {"jsonrpc": "2.0", "id": self._id, "method": method, "params": params}
-        data = self.http.post(self.url, json_body=body)
+        try:
+            data = self.http.post(self.url, json_body=body)
+        except HttpError as exc:
+            # Every RPC call is a POST to the same URL, so without the method
+            # name a failure reads as "POST https://... failed" and says
+            # nothing about which call the node refused.
+            raise HttpError(f"{method}: {exc}", exc.status) from exc
         if not isinstance(data, dict):
             raise HttpError(f"Unexpected RPC response for {method}")
         if "error" in data:

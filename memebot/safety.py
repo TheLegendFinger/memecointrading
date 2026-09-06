@@ -52,6 +52,18 @@ class TokenSafety:
     top_holder_pct: float = 0.0   # biggest non-pool account, share of supply
     top10_pct: float = 0.0        # ten biggest non-pool accounts
     pool_pct: float = 0.0         # what sits in the pool, excluded from above
+    holders_read: bool = False    # whether the node answered the holder query
+    holder_error: str = ""        # why it did not, if it did not
+
+    @property
+    def headline(self) -> str:
+        """A few words for the activity feed, which truncates hard."""
+        if not self.checked:
+            return "chain unreadable"
+        if not self.ok:
+            first = self.reasons[0]
+            return first.split(" - ")[0].split(":")[0].strip()
+        return "chain checks passed"
 
     @property
     def summary(self) -> str:
@@ -59,6 +71,8 @@ class TokenSafety:
             return "unverified"
         if not self.ok:
             return "; ".join(self.reasons)
+        if not self.holders_read:
+            return f"authorities revoked; holders unknown ({self.holder_error or 'not read'})"
         return (
             f"authorities revoked, top holder {self.top_holder_pct * 100:.0f}%, "
             f"top 10 {self.top10_pct * 100:.0f}%"
@@ -140,20 +154,26 @@ class TokenSafetyChecker:
         return result
 
     def _measure_holders(self, pair: PairSnapshot, result: TokenSafety) -> None:
+        """Concentration, when the node will tell us.
+
+        getTokenLargestAccounts is a heavy query and free public endpoints
+        frequently refuse or throttle it. Unless require_holder_data is set,
+        that is recorded and moved past: the authority checks above are the
+        ones that decide, and blocking every trade because a free endpoint
+        will not answer is not safety, it is just not trading.
+        """
         mint = pair.base.address
         try:
             supply = float(self.rpc.get_token_supply(mint))
             amounts = list(self.rpc.get_token_largest_accounts(mint))
         except Exception as exc:  # noqa: BLE001 - as above; unreadable is not fatal
-            log.debug("Could not read holders for %s: %s", mint, exc)
-            if not self.cfg.allow_unverified:
-                result.reasons.append(f"holders could not be read: {exc}")
+            self._holders_unavailable(result, str(exc) or type(exc).__name__)
             return
         if supply <= 0 or not amounts:
-            if not self.cfg.allow_unverified:
-                result.reasons.append("holders could not be read: empty response")
+            self._holders_unavailable(result, "the node returned no holders")
             return
 
+        result.holders_read = True
         result.supply = supply
         pool_estimate = self._pool_token_estimate(pair)
         holders = list(amounts)
@@ -183,3 +203,10 @@ class TokenSafetyChecker:
                 f"ten accounts hold {result.top10_pct * 100:.0f}% of supply "
                 f"(limit {limit * 100:.0f}%)"
             )
+
+    def _holders_unavailable(self, result: TokenSafety, why: str) -> None:
+        result.holders_read = False
+        result.holder_error = why
+        log.debug("Holder data unavailable for %s: %s", result.mint, why)
+        if self.cfg.require_holder_data:
+            result.reasons.append(f"holders could not be read: {why}")

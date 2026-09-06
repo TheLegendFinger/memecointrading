@@ -68,8 +68,16 @@ safety:
   # Share of supply, ignoring the pool's own account. 0 turns a check off.
   max_single_holder_pct: 0.15
   max_top10_holder_pct: 0.40
-  # If the chain cannot be read, buy anyway? No: unchecked is treated as failed.
+  # If the mint account cannot be read at all, buy anyway? No: unchecked is
+  # treated as failed. That read is one cheap getAccountInfo and works on the
+  # free public RPC.
   allow_unverified: false
+  # Holder concentration needs getTokenLargestAccounts, which the free public
+  # endpoint often refuses. Leave this off: the coin is still bought on the
+  # strength of its authorities. Turn it on only with an RPC that answers it
+  # (Helius, QuickNode and Alchemy all have free tiers) - otherwise the bot
+  # refuses every coin and never trades.
+  require_holder_data: false
   cache_seconds: 600
 
 learning:
@@ -134,4 +142,7 @@ execution:
   sol_fee_reserve: 0.025
   # Trade against SOL. Change to the USDC mint to hold stables between trades.
   quote_mint: So11111111111111111111111111111111111111112
+  # The free public node. It works for trading, but refuses some heavy reads
+  # (see safety.require_holder_data). A free Helius/QuickNode/Alchemy endpoint
+  # is faster and answers all of them.
   rpc_url: https://api.mainnet-beta.solana.com

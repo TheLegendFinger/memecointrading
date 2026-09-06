@@ -101,6 +101,7 @@ class TradingEngine:
         self.ticks = 0
         self._next_scan_at: Optional[float] = None
         self._clock = time.monotonic
+        self.last_candidates: List = []
         # Called after every cycle. The console live view uses this to redraw;
         # a failure in it must never stop the bot trading.
         self.on_cycle = on_cycle
@@ -330,6 +331,10 @@ class TradingEngine:
             ((self.strategy.score(pair), pair) for pair in filtered.passed),
             key=lambda item: item[0], reverse=True,
         )[:5]
+        # Kept on the engine so the display still has something to show between
+        # scans - a position tick carries no candidates of its own, and the
+        # watchlist blinking out every few seconds looks like a crash.
+        self.last_candidates = report.top_candidates
 
         opened = 0
         for signal_obj in signals:
@@ -418,7 +423,8 @@ class TradingEngine:
         log.info("Skipping %s: %s", symbol, verdict.summary)
         self.emit(
             "safety",
-            f"Skipped {symbol} - {verdict.reasons[0] if verdict.reasons else 'unsafe'}",
+            # Short: the feed truncates, and the whole reason goes in detail.
+            f"Skipped {symbol}: {verdict.headline}",
             symbol=symbol,
             address=signal_obj.token.address,
             level="warn",

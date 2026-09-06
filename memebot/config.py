@@ -219,7 +219,14 @@ class ExecutionConfig:
 
 @dataclass
 class BotConfig:
-    poll_interval_seconds: float = 30.0
+    # How often the whole market is scanned for something new to buy. Each
+    # scan costs ~35 requests, so this is the setting the rate limits care
+    # about.
+    poll_interval_seconds: float = 20.0
+    # How often coins already held are re-priced and their exits checked. Far
+    # cheaper - one batched request however many are open - so it runs much
+    # faster: a stop loss is only as good as the last price it saw.
+    position_poll_seconds: float = 5.0
     # A SQLite path, or a postgres:// URL for hosted/serverless deployments.
     state_db: str = "data/memebot.sqlite3"
     log_file: str = "logs/memebot.log"
@@ -240,6 +247,13 @@ class BotConfig:
         errors = []
         if self.poll_interval_seconds < 1:
             errors.append("poll_interval_seconds must be >= 1")
+        if self.position_poll_seconds < 1:
+            errors.append("position_poll_seconds must be >= 1")
+        if self.position_poll_seconds > self.poll_interval_seconds:
+            errors.append(
+                "position_poll_seconds cannot exceed poll_interval_seconds - "
+                "held coins are checked at least as often as new ones are looked for"
+            )
         r = self.risk
         if not 0 < r.position_size_pct <= 1:
             errors.append("risk.position_size_pct must be in (0, 1]")
@@ -434,6 +448,7 @@ LEGACY_EXAMPLE_FINGERPRINTS = {
     "1022bd193340be32ec30ad9c9d95e6ed70ee19ae53fb462788ecc28429d788a3",
     "bb4e33b2451470fa3e43dd96e3917b241cb08001f961d6e84ec7ff274cebe396",
     "a2335ab77fe9f423154f46be85f949451cb60f799cd376dcdfb1d5ff571c9810",
+    "7f9fd0c0e716485c8a8d2a037857f9e84c631a26e900ad3f6d103a30a12c71d5",
 }
 
 

@@ -53,7 +53,8 @@ def test_the_frame_shows_what_it_holds_and_what_it_did(traded):
     assert "HOLDING" in frame and "BEST" in frame
     assert "ACTIVITY" in frame
     assert "Bought BEST" in frame
-    assert "Ctrl+C to stop" in frame
+    assert "type STOP then Enter to stop" in frame
+    assert "next scan in" in frame
 
 
 def test_the_frame_shows_the_money(traded):

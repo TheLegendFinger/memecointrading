@@ -87,6 +87,10 @@ class FakeDexScreener:
         self.discover_feeds = feeds
         return list(self.pairs.values())[:max_candidates]
 
+    def pairs_for_tokens(self, addresses: Iterable[str]) -> List[PairSnapshot]:
+        """The batch lookup the engine uses to re-price open positions."""
+        return [self.pairs[a] for a in addresses if a in self.pairs]
+
     def best_pair(self, token_address: str) -> Optional[PairSnapshot]:
         return self.pairs.get(token_address)
 

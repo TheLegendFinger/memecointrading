@@ -89,13 +89,44 @@ def cmd_run(args: argparse.Namespace, config: BotConfig) -> int:
             return 1
 
     try:
-        engine.run(max_cycles=args.cycles)
+        engine.run(max_cycles=args.cycles, on_idle=_stop_watcher(engine, view))
     except KeyboardInterrupt:  # pragma: no cover - interactive
         print("\nInterrupted.")
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    if engine.stop_reason:
+        print(f"\n{engine.stop_reason}")
     return 0
+
+
+STOP_WORDS = ("stop", "quit", "exit")
+
+
+def _stop_watcher(engine, view):
+    """Watch the console for STOP while the bot runs, and keep the view ticking.
+
+    Called by the run loop about once a second. Reading is non-blocking, so
+    trading is never waiting on the keyboard, and nothing is left holding stdin
+    once the loop ends - otherwise the menu's next prompt would lose a line.
+    """
+    from .keyboard import LineReader
+
+    reader = LineReader()
+
+    def on_idle(eng):
+        line = reader.poll()
+        if line is not None:
+            word = line.strip().lower()
+            if word in STOP_WORDS:
+                eng.request_stop("Stopped by STOP. Open positions were left open.")
+            elif word:
+                view.typed = ""
+        if view.active:
+            view.typed = reader.buffer
+            view.render(eng)
+
+    return on_idle
 
 
 def cmd_once(args: argparse.Namespace, config: BotConfig) -> int:

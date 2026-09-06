@@ -9,7 +9,13 @@
 # Anything you leave out uses the built-in default - run
 # `python -m memebot config` to see the full effective configuration.
 
-poll_interval_seconds: 45        # fewer API calls; memecoin moves last minutes
+# How often the whole market is scanned for something new to buy. Each scan
+# costs about 35 requests, so this is what the rate limits care about.
+poll_interval_seconds: 20
+# How often coins already HELD are re-priced and their exits checked. One
+# batched request however many are open, so it can be much faster - a stop
+# loss is only as good as the last price it saw.
+position_poll_seconds: 5
 state_db: data/memebot.sqlite3
 log_file: logs/memebot.log
 log_level: INFO

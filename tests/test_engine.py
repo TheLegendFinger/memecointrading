@@ -206,12 +206,26 @@ def test_liquidate_all_closes_everything(config):
     assert not engine.portfolio.positions
 
 
+class VirtualClock:
+    """Time only moves when the loop sleeps, so cadence is testable instantly."""
+
+    def __init__(self):
+        self.now = 1000.0
+        self.slept = []
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.slept.append(seconds)
+        self.now += seconds
+
+
 def test_run_loop_stops_after_max_cycles(config, hot_pair):
     engine, _ = build_engine(config, [hot_pair])
-    slept = []
-    engine.run(max_cycles=3, sleep=slept.append)
+    clock = VirtualClock()
+    engine.run(max_cycles=3, sleep=clock.sleep, clock=clock)
     assert engine.cycles == 3
-    assert len(slept) == 2  # no sleep after the final cycle
 
 
 def test_run_refuses_to_start_when_preflight_fails(config, hot_pair):
@@ -223,7 +237,8 @@ def test_run_refuses_to_start_when_preflight_fails(config, hot_pair):
 
 def test_equity_curve_is_recorded_each_cycle(config, hot_pair):
     engine, _ = build_engine(config, [hot_pair])
-    engine.run(max_cycles=2, sleep=lambda _s: None)
+    clock = VirtualClock()
+    engine.run(max_cycles=2, sleep=clock.sleep, clock=clock)
     assert len(engine.storage.equity_curve()) >= 1
     assert engine.storage.peak_equity() > 0
 

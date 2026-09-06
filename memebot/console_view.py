@@ -63,6 +63,9 @@ class ConsoleView:
         self.glyphs = Glyphs()
         # Piped output gets ordinary log lines instead of redrawn frames.
         self.active = force if force is not None else sys.stdout.isatty()
+        # What the user has typed so far, echoed in the footer on Windows where
+        # keystrokes are read one at a time and the terminal does not show them.
+        self.typed = ""
 
     # ---- pieces ---------------------------------------------------------------
     def header(self, engine) -> List[str]:
@@ -165,10 +168,19 @@ class ConsoleView:
         return lines + [""]
 
     def footer(self, engine) -> List[str]:
-        interval = engine.config.poll_interval_seconds
-        note = (f"  next scan in ~{interval:.0f}s  {self.glyphs.dot}  Ctrl+C to stop"
-                f"  {self.glyphs.dot}  real funds")
-        return [paint(note, GREY)]
+        dot = self.glyphs.dot
+        remaining = getattr(engine, "seconds_to_next_scan", 0.0)
+        held = len(getattr(engine.portfolio, "open_positions", []) or [])
+        watch = engine.config.position_poll_seconds
+        held_note = (f"{held} held, re-checked every {watch:.0f}s" if held
+                     else "nothing held yet")
+        status = paint(f"  next scan in {remaining:>3.0f}s  {dot}  {held_note}"
+                       f"  {dot}  real funds", GREY)
+        if self.typed:
+            prompt = paint(f"  > {self.typed}", YELLOW)
+        else:
+            prompt = paint(f"  type STOP then Enter to stop  {dot}  Ctrl+C also works", GREY)
+        return [status, prompt]
 
     # ---- the frame ------------------------------------------------------------
     def frame(self, engine, report=None) -> str:

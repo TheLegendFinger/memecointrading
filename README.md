@@ -37,7 +37,7 @@ time, then opens a menu — everything is a number:
 ```
   ╋╋╋╋╋╋╋╋╋╋┏┓╋╋┏┓
   ┏━━┳━┳━━┳━┫┗┳━┫┗┓
-  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.5.1
+  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.6.0
   ┗┻┻┻━┻┻┻┻━┻━┻━┻━┛   LIVE - real money
 
    $1,043.18 · $812.40 cash · 2 open · +4.32%
@@ -271,6 +271,25 @@ phone. Locally, `python scripts/dev_server.py` serves it if you want it.
             liquidity-drain exit · stale-data exit · momentum reversal
 ```
 
+Steps [1]–[6] run every `poll_interval_seconds` (20s). Step [7] does **not** wait
+for them: coins already held are re-priced and their exits checked every
+`position_poll_seconds` (5s), because a stop loss is only ever as good as the
+last price it saw. The fast tick costs one batched request however many
+positions are open; a full scan costs about 35, which is what the rate limits
+care about. Together that is ~117 requests a minute against DexScreener's
+published ~300.
+
+The live display counts down to the next scan, and typing **STOP** then Enter
+stops the bot (Ctrl+C still works):
+
+```
+  next scan in  12s  ·  2 held, re-checked every 5s  ·  real funds
+  type STOP then Enter to stop  ·  Ctrl+C also works
+```
+
+Stopping is not selling — open positions stay open. Use `liquidate` (menu
+option **2**) to close them.
+
 ### How coins are found
 
 Step [1] is worth spelling out, because it is where a scan goes wrong in a way
@@ -470,6 +489,8 @@ Worth tuning first:
 | `data.max_per_symbol` | `2` | How many coins from one ticker family get through per cycle. `0` turns the cap off. |
 | `data.use_trending_pools` | `true` | Discovery by trading activity rather than by name. Turning it off narrows the scan to text matching. |
 | `data.max_candidates` | `400` | How many pairs a cycle scores. |
+| `poll_interval_seconds` | `20` | How often the market is scanned for something new. The rate-limit dial. |
+| `position_poll_seconds` | `5` | How often coins already held are re-priced and their exits checked. |
 | `risk.position_size_pct` | `0.08` | Fraction of equity per position. |
 | `risk.min_position_usd` | `1` | Smallest position worth opening. Swap costs are mostly flat, so at $1 a round trip is most of the trade — `doctor` prints the number. |
 | `risk.stop_loss_pct` | `0.20` | Too tight and you get stopped out of every winner. |

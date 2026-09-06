@@ -96,7 +96,11 @@ class TradingEngine:
             )
 
         self._stop = False
+        self.stop_reason = ""
         self.cycles = 0
+        self.ticks = 0
+        self._next_scan_at: Optional[float] = None
+        self._clock = time.monotonic
         # Called after every cycle. The console live view uses this to redraw;
         # a failure in it must never stop the bot trading.
         self.on_cycle = on_cycle
@@ -128,7 +132,7 @@ class TradingEngine:
                 pass
 
     def stop(self) -> None:
-        self._stop = True
+        self.request_stop()
 
     def preflight(self) -> Optional[str]:
         return self.executor.preflight()
@@ -164,10 +168,25 @@ class TradingEngine:
     def _refresh_positions(self) -> Dict[str, PairSnapshot]:
         """Pull fresh pair data for everything we hold, and mark the book."""
         snapshots: Dict[str, PairSnapshot] = {}
-        for position in self.portfolio.open_positions:
-            pair: Optional[PairSnapshot] = None
+        # One batched request for everything held rather than one each: this
+        # runs every few seconds now, and open positions are the thing most
+        # worth having a fresh price for.
+        batched: Dict[str, PairSnapshot] = {}
+        addresses = [p.token.address for p in self.portfolio.open_positions]
+        if addresses:
             try:
-                pair = self.data.best_pair(position.token.address)
+                for snap in self.data.pairs_for_tokens(addresses):
+                    existing = batched.get(snap.base.address)
+                    if existing is None or snap.liquidity_usd > existing.liquidity_usd:
+                        batched[snap.base.address] = snap
+            except Exception as exc:  # pragma: no cover - network dependent
+                log.warning("Could not refresh open positions: %s", exc)
+
+        for position in self.portfolio.open_positions:
+            pair: Optional[PairSnapshot] = batched.get(position.token.address)
+            try:
+                if pair is None:
+                    pair = self.data.best_pair(position.token.address)
             except Exception as exc:  # pragma: no cover - network dependent
                 log.warning("Could not refresh %s: %s", position.token, exc)
             if pair is None or pair.price_usd <= 0:
@@ -460,15 +479,54 @@ class TradingEngine:
             len(report.opened), len(report.closed), self.portfolio.total_return_pct * 100.0,
         )
 
-        if self.on_cycle is not None:
-            try:
-                self.on_cycle(self, report)
-            except Exception as exc:  # noqa: BLE001 - the display is not the job
-                log.debug("Cycle observer failed: %s", exc)
+        self._notify(report)
         return report
 
+    def _notify(self, report: CycleReport) -> None:
+        """Let the display redraw. A failure in it is never the bot's problem."""
+        if self.on_cycle is None:
+            return
+        try:
+            self.on_cycle(self, report)
+        except Exception as exc:  # noqa: BLE001 - the display is not the job
+            log.debug("Cycle observer failed: %s", exc)
+
     # ---- main loop -------------------------------------------------------------
-    def run(self, max_cycles: Optional[int] = None, sleep=time.sleep) -> None:
+    def run_position_tick(self) -> CycleReport:
+        """Re-price what is held and act on its exits. No discovery.
+
+        This is the cheap half of a cycle - one batched request however many
+        coins are open - so it runs several times between scans. A stop loss is
+        only ever as good as the last price it saw.
+        """
+        report = CycleReport()
+        self.ticks += 1
+        self.manage_positions(report)
+        self.portfolio.snapshot_equity()
+        return report
+
+    @property
+    def seconds_to_next_scan(self) -> float:
+        """How long until the next full market scan, for the countdown."""
+        if self._next_scan_at is None:
+            return 0.0
+        return max(0.0, self._next_scan_at - self._clock())
+
+    def request_stop(self, reason: str = "") -> None:
+        """Ask the loop to finish the step it is on and stop."""
+        if self._stop:
+            return
+        self._stop = True
+        self.stop_reason = reason
+        log.info("Stop requested%s", f": {reason}" if reason else "")
+
+    # ---- the loop ---------------------------------------------------------------
+    def run(self, max_cycles: Optional[int] = None, sleep=time.sleep,
+            on_idle: Optional[Callable[["TradingEngine"], None]] = None,
+            clock=time.monotonic) -> None:
+        """Scan for entries every poll_interval_seconds, manage what is held
+        every position_poll_seconds, and call `on_idle` about once a second in
+        between so a display can count down and watch for a typed command."""
         blocked = self.preflight()
         if blocked:
             raise RuntimeError(f"Executor is not ready: {blocked}")
@@ -482,25 +540,55 @@ class TradingEngine:
         log.warning("Real funds are at risk on every order")
 
         self.install_signal_handlers()
+        scan_every = max(1.0, float(self.config.poll_interval_seconds))
+        tick_every = max(1.0, min(float(self.config.position_poll_seconds), scan_every))
+        step = min(1.0, tick_every)
+
+        self._clock = clock
+        self._next_scan_at = clock()
+        next_tick_at = clock()
+
         while not self._stop:
-            started = time.monotonic()
+            now = clock()
             try:
-                self.run_cycle()
+                if now >= self._next_scan_at:
+                    self.run_cycle()
+                    # From the end of the work, so a slow scan does not stack up.
+                    self._next_scan_at = clock() + scan_every
+                    next_tick_at = clock() + tick_every
+                elif now >= next_tick_at:
+                    report = self.run_position_tick()
+                    next_tick_at = clock() + tick_every
+                    self._notify(report)
             except Exception as exc:  # pragma: no cover - defensive
                 log.exception("Cycle failed: %s", exc)
+                self._next_scan_at = max(self._next_scan_at, clock() + scan_every)
+
             if max_cycles is not None and self.cycles >= max_cycles:
                 break
             if self._stop:
                 break
-            elapsed = time.monotonic() - started
-            sleep(max(0.0, self.config.poll_interval_seconds - elapsed))
+            if on_idle is not None:
+                try:
+                    on_idle(self)
+                except Exception as exc:  # noqa: BLE001 - a display never stops trading
+                    log.debug("on_idle failed: %s", exc)
+            if self._stop:
+                break
+            # Wake at whichever comes first, but at least once a second so the
+            # countdown moves and a typed command is noticed promptly.
+            waits = [step,
+                     max(0.0, self._next_scan_at - clock()),
+                     max(0.0, next_tick_at - clock())]
+            sleep(max(0.05, min(w for w in waits if w > 0) if any(w > 0 for w in waits) else step))
 
+        self._next_scan_at = None
         log.info(
             "Stopped after %d cycles | equity $%.2f | realized pnl $%.2f",
             self.cycles, self.portfolio.equity, self.storage.trade_stats()["realized_pnl_usd"],
         )
         self.emit("stop", f"Stopped after {self.cycles} cycle(s)",
-                  detail=f"equity ${self.portfolio.equity:,.2f}")
+                  detail=(self.stop_reason or f"equity ${self.portfolio.equity:,.2f}"))
 
     def liquidate_all(self, reason: str = "manual liquidation") -> CycleReport:
         """Close every open position at the current market price."""

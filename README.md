@@ -37,7 +37,7 @@ time, then opens a menu — everything is a number:
 ```
   ╋╋╋╋╋╋╋╋╋╋┏┓╋╋┏┓
   ┏━━┳━┳━━┳━┫┗┳━┫┗┓
-  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.4.0
+  ┃┃┃┃┻┫┃┃┃┻┫╋┃╋┃┏┫   v1.5.0
   ┗┻┻┻━┻┻┻┻━┻━┻━┻━┛   LIVE - real money
 
    $1,043.18 · $812.40 cash · 2 open · +4.32%
@@ -186,6 +186,7 @@ change anything — there is no wallet key in the deployment at all.
 | `trades` | Recent fills with fees, slippage and realized P&L. |
 | `liquidate` | Close every open position at market. |
 | `reset` | Wipe the bot's trade history. Moves no funds. |
+| `learn` | What the bot has concluded from its own closed trades, bucket by bucket (`--json` for scripts). |
 | `config` | Print the effective configuration after file + env + flags. `--reset` restores the recommended `config.yaml`. |
 
 Global flags: `--config`, `--db`, `--log-level`. `--db` takes a SQLite path
@@ -333,6 +334,47 @@ owners, so one person spread across five accounts reads as five holders: it
 undercounts concentration, though it never invents it. And nothing here can
 tell you whether the team will simply sell.
 
+### Learning from its own trades
+
+At every entry the bot banks what it knew at that moment — which feed found the
+coin, how deep the pool was, how old it was, how hard it was moving, how lopsided
+the buying was, which part of the day it is — and, when the position closes, what
+the trade returned. `python -m memebot learn` (menu option **6**) prints the
+whole table.
+
+Those recordings are written from the very first trade. What they are *used* for
+starts later, and cautiously, because a few dozen memecoin trades is a violent
+sample and the dangerous failure is not "learns nothing" but "learns a lucky
+streak and bets the wallet on it":
+
+- **Nothing is applied until `min_trades` (30) have closed.** Before that it
+  only records.
+- **Every edge is shrunk towards the overall average** by how thin the evidence
+  is — `n / (n + k)`. Five trades in a bucket barely move; fifty move most of
+  the way. A bucket under `min_bucket_trades` (4) is ignored outright.
+- **An edge is relative.** A bucket is only good if it beat this bot's own
+  average; a history where every trade won equally says nothing about which
+  entries were better, and tilts nothing.
+- **The total tilt is hard-capped** at `max_adjustment` (0.10 on a 0–1 score).
+  However lopsided the history, this leans on the strategy — it never replaces
+  it.
+- **Nothing is hidden.** Every bucket's sample size, raw win rate, return and
+  final adjustment are in the `learn` output, and the reason on each buy shows
+  the tilt that was applied.
+
+```
+  BUCKET             N   WIN%  RETURN   VS AVG  ADJUST
+  -----------------  --  ----  -------  ------  ------
+  found by trending  22   59%    +8.4%   +6.1%  +0.042
+  liq<50k             9   22%   -11.2%  -13.5%  -0.063
+  age<2h              6   33%    -4.0%   -6.3%  -0.023
+```
+
+It is a tilt learned from experience, not a model. It can only weigh the
+buckets someone wrote down, and if the market regime changes underneath it, it
+will keep believing the old one for a while — which is exactly why the cap
+exists. `reset` clears this history along with the rest of the book.
+
 ## What an order actually does
 
 Per order, live mode requests a Jupiter route → rejects it if price impact
@@ -433,6 +475,8 @@ Worth tuning first:
 | `filters.min_liquidity_usd` | `25000` | The single most effective rug filter. |
 | `safety.max_top10_holder_pct` | `0.40` | Share of supply the ten biggest non-pool accounts may hold. |
 | `safety.allow_unverified` | `false` | Whether a token whose chain data could not be read is bought anyway. |
+| `learning.min_trades` | `30` | Closed trades before anything learned is applied. |
+| `learning.max_adjustment` | `0.10` | The hard cap on the whole learned tilt. |
 | `filters.min_age_minutes` | `20` | Lower to catch launches earlier, at much higher risk. |
 | `execution.slippage_bps` | `150` | Too low and orders revert; too high and you get sandwiched. |
 

@@ -130,15 +130,19 @@ class MomentumStrategy(Strategy):
     def generate_entries(self, pairs: Iterable[PairSnapshot]) -> List[Signal]:
         signals: List[Signal] = []
         for pair in pairs:
-            value = self.score(pair)
+            raw = self.score(pair)
+            value, why = self.tilt(raw, pair)
             if value < self.cfg.min_score:
                 continue
+            reason = f"momentum {value:.2f} | {self.explain(pair)}"
+            if why:
+                reason += f" | {why}"
             signals.append(
                 Signal(
                     token=pair.base,
                     side=Side.BUY,
                     score=value,
-                    reason=f"momentum {value:.2f} | {self.explain(pair)}",
+                    reason=reason,
                     pair=pair,
                     price=pair.price_usd,
                 )

@@ -193,6 +193,20 @@ class Storage:
                     PRIMARY KEY (address, ts)
                 )""",
             "CREATE INDEX IF NOT EXISTS idx_samples_addr_ts ON price_samples(address, ts)",
+            f"""CREATE TABLE IF NOT EXISTS trade_outcomes (
+                    token_address {d.text} NOT NULL,
+                    opened_at     {d.real} NOT NULL,
+                    closed_at     {d.real} NOT NULL DEFAULT 0,
+                    symbol        {d.text},
+                    score         {d.real} NOT NULL DEFAULT 0,
+                    source        {d.text},
+                    features      {d.text} NOT NULL DEFAULT '{{}}',
+                    cost_usd      {d.real} NOT NULL DEFAULT 0,
+                    return_pct    {d.real} NOT NULL DEFAULT 0,
+                    exit_reason   {d.text},
+                    PRIMARY KEY (token_address, opened_at)
+                )""",
+            "CREATE INDEX IF NOT EXISTS idx_outcomes_closed ON trade_outcomes(closed_at)",
             f"""CREATE TABLE IF NOT EXISTS equity (
                     ts        {d.real} PRIMARY KEY,
                     cash      {d.real} NOT NULL,
@@ -375,6 +389,63 @@ class Storage:
             "total_fees_usd": float(fees_row.get("f") or 0.0),
         }
 
+    # ---- trade outcomes (what the learner reads) -------------------------------
+    def record_entry(self, token_address: str, opened_at: float, symbol: str,
+                     score: float, source: str, features: Dict[str, Any],
+                     cost_usd: float) -> None:
+        """What the bot knew at the moment it bought, before the result exists.
+
+        Written at entry rather than reconstructed at exit: by the time a
+        position closes the market has moved and the numbers that led to the
+        buy are gone.
+        """
+        self.execute("DELETE FROM trade_outcomes WHERE token_address = ? AND opened_at = ?",
+                     (token_address, opened_at))
+        self.execute(
+            """INSERT INTO trade_outcomes(token_address, opened_at, closed_at, symbol,
+                                          score, source, features, cost_usd)
+               VALUES(?,?,?,?,?,?,?,?)""",
+            (token_address, opened_at, 0.0, symbol, score, source,
+             json.dumps(features, sort_keys=True), cost_usd),
+        )
+        self._commit()
+
+    def record_exit(self, token_address: str, closed_at: float, return_pct: float,
+                    exit_reason: str) -> bool:
+        """Close out the most recent open entry for a token. False if none."""
+        row = self._fetchone(
+            """SELECT opened_at FROM trade_outcomes
+               WHERE token_address = ? AND closed_at = 0
+               ORDER BY opened_at DESC LIMIT 1""",
+            (token_address,),
+        )
+        if row is None:
+            return False
+        self.execute(
+            """UPDATE trade_outcomes SET closed_at = ?, return_pct = ?, exit_reason = ?
+               WHERE token_address = ? AND opened_at = ?""",
+            (closed_at, return_pct, exit_reason, token_address, row["opened_at"]),
+        )
+        self._commit()
+        return True
+
+    def closed_outcomes(self, limit: int = 500) -> List[Dict[str, Any]]:
+        """Finished trades, newest first, with the features they were bought on."""
+        rows = self._fetchall(
+            """SELECT * FROM trade_outcomes WHERE closed_at > 0
+               ORDER BY closed_at DESC LIMIT ?""",
+            (int(limit),),
+        )
+        out = []
+        for row in rows:
+            record = dict(row)
+            try:
+                record["features"] = json.loads(record.get("features") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                record["features"] = {}
+            out.append(record)
+        return out
+
     # ---- events ----------------------------------------------------------------
     def record_event(
         self,
@@ -468,7 +539,8 @@ class Storage:
         return float(row["equity"]) if row else None
 
     def reset(self) -> None:
-        for table in ("trades", "positions", "state", "equity", "events", "price_samples"):
+        for table in ("trades", "positions", "state", "equity", "events", "price_samples",
+                      "trade_outcomes"):
             self.execute(f"DELETE FROM {table}")
         self._commit()
 

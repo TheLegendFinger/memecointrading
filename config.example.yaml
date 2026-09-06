@@ -66,6 +66,19 @@ safety:
   allow_unverified: false
   cache_seconds: 600
 
+learning:
+  # The bot records what it knew at every entry and what the trade returned,
+  # then leans towards the kinds of entry that have actually worked. Recording
+  # starts with the first trade; the tilt only starts after min_trades.
+  enabled: true
+  min_trades: 30            # nothing is applied before this many have CLOSED
+  min_bucket_trades: 4      # a bucket needs its own evidence too
+  shrinkage_trades: 10      # higher = more sceptical of a small sample
+  sensitivity: 1.0          # a +10% return edge moves the score by 0.10
+  max_adjustment: 0.10      # hard cap: this tilts the strategy, never replaces it
+  max_trades: 500           # how far back to learn from
+  refresh_seconds: 300
+
 strategy:
   name: momentum
   # The main dial. Roughly what the score means:

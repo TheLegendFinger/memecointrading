@@ -31,6 +31,7 @@ from .storage import Storage, open_storage
 from .strategy import CandidateFilter, build_strategy
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .learning import TradeLearner
     from .safety import TokenSafetyChecker
 
 log = logging.getLogger(__name__)
@@ -66,6 +67,7 @@ class TradingEngine:
         jupiter: Optional[JupiterClient] = None,
         on_cycle: Optional[Callable[["TradingEngine", CycleReport], None]] = None,
         safety: Optional["TokenSafetyChecker"] = None,
+        learner: Optional["TradeLearner"] = None,
     ) -> None:
         self.config = config
         self.storage = storage or open_storage(config.state_db)
@@ -85,6 +87,13 @@ class TradingEngine:
         self.filter = CandidateFilter(config.filters)
         self.safety = safety or self._build_safety_checker()
         self.strategy = build_strategy(config.strategy.name, config.strategy)
+        self.learner = learner or self._build_learner()
+        if self.learner is not None:
+            # The threshold is then applied to the tilted score rather than the
+            # raw one, which is the whole point of hooking it in here.
+            self.strategy.adjust_score = (
+                lambda score, pair: self.learner.adjust(score, pair, pair.source)
+            )
 
         self._stop = False
         self.cycles = 0
@@ -199,6 +208,7 @@ class TradingEngine:
         realized = self.portfolio.apply_fill(fill)
         self.risk.record_close(realized)
         report.closed.append(fill)
+        self._record_exit(position, realized, reason)
         self.emit(
             "sell",
             f"Sold {position.token.symbol} for ${fill.usd_amount - fill.fee_usd:,.2f} "
@@ -256,6 +266,7 @@ class TradingEngine:
 
         self.portfolio.apply_fill(fill)
         report.opened.append(fill)
+        self._record_entry(signal_obj, fill)
         self.emit(
             "buy",
             f"Bought {signal_obj.token.symbol} for ${fill.usd_amount:,.2f} @ {fill.price:.8g}",
@@ -319,6 +330,49 @@ class TradingEngine:
             self._open_position(signal_obj, report)
             if len(report.opened) > before:
                 opened += 1
+
+    # ---- learning from what happened -------------------------------------------
+    def _build_learner(self):
+        if not self.config.learning.enabled:
+            return None
+        from .learning import TradeLearner
+
+        return TradeLearner(self.storage, self.config.learning)
+
+    def _record_entry(self, signal_obj: Signal, fill: Fill) -> None:
+        """Bank what was true at the moment of the buy.
+
+        Written now rather than reconstructed at exit: by the time the position
+        closes, the market has moved and the numbers that led to the buy are
+        gone. Recording happens even with learning switched off - it costs one
+        insert, and without a history there is nothing to switch on later.
+        """
+        pair = signal_obj.pair
+        if pair is None:
+            return
+        try:
+            from .learning import entry_features
+
+            position = self.portfolio.positions.get(signal_obj.token.address)
+            self.storage.record_entry(
+                token_address=signal_obj.token.address,
+                opened_at=position.opened_at if position else time.time(),
+                symbol=signal_obj.token.symbol,
+                score=signal_obj.score,
+                source=pair.source,
+                features=entry_features(pair, pair.source),
+                cost_usd=fill.usd_amount,
+            )
+        except Exception as exc:  # noqa: BLE001 - bookkeeping never blocks trading
+            log.debug("Could not record the entry for learning: %s", exc)
+
+    def _record_exit(self, position: Position, realized: float, reason: str) -> None:
+        try:
+            cost = position.cost_usd or 0.0
+            return_pct = (realized / cost) if cost > 0 else 0.0
+            self.storage.record_exit(position.token.address, time.time(), return_pct, reason)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Could not record the exit for learning: %s", exc)
 
     # ---- on-chain safety -------------------------------------------------------
     def _build_safety_checker(self):

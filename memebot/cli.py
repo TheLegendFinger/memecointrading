@@ -572,6 +572,71 @@ def cmd_reset(args: argparse.Namespace, config: BotConfig) -> int:
     return 0
 
 
+def cmd_learn(args: argparse.Namespace, config: BotConfig) -> int:
+    """What the bot has concluded from its own closed trades, in full."""
+    from .learning import TradeLearner
+
+    storage = open_storage(config.state_db)
+    try:
+        report = TradeLearner(storage, config.learning).report()
+    finally:
+        storage.close()
+
+    if args.json:
+        print(json.dumps({
+            "trades": report.trades,
+            "wins": report.wins,
+            "win_rate": report.win_rate,
+            "mean_return_pct": report.mean_return * 100,
+            "active": report.active,
+            "min_trades": report.min_trades,
+            "buckets": [
+                {"dimension": b.dimension, "bucket": b.bucket, "trades": b.trades,
+                 "win_rate": b.win_rate, "mean_return_pct": b.mean_return * 100,
+                 "edge_pct": b.edge * 100, "adjustment": b.adjustment}
+                for b in report.buckets
+            ],
+        }, indent=2))
+        return 0
+
+    print(f"\nmemebot {__version__} | learning from closed trades")
+    print("-" * 62)
+    if not report.trades:
+        print("  No closed trades yet. Every entry is recorded from the first one;")
+        print(f"  the tilt starts being applied after {report.min_trades}.")
+        return 0
+
+    print(f"  closed trades     {report.trades}")
+    print(f"  win rate          {report.win_rate * 100:.0f}% ({report.wins}W/"
+          f"{report.trades - report.wins}L)")
+    print(f"  mean return       {report.mean_return * 100:+.1f}% per trade")
+    if report.active:
+        print(f"  status            applying a tilt, capped at "
+              f"{config.learning.max_adjustment:+.2f} on the score")
+    else:
+        remaining = report.min_trades - report.trades
+        print(f"  status            recording only - {remaining} more trade(s) "
+              f"before anything is applied")
+
+    if not report.buckets:
+        return 0
+    print("\n  What has actually worked (adjustment is after shrinking for sample size):\n")
+    rows = []
+    for bucket in report.buckets[: args.limit]:
+        rows.append([
+            bucket.bucket,
+            str(bucket.trades),
+            f"{bucket.win_rate * 100:.0f}%",
+            f"{bucket.mean_return * 100:+.1f}%",
+            f"{bucket.edge * 100:+.1f}%",
+            f"{bucket.adjustment:+.3f}",
+        ])
+    print(_table(rows, ["BUCKET", "N", "WIN%", "RETURN", "VS AVG", "ADJUST"]))
+    print("\n  A bucket with few trades is shrunk towards the average on purpose:")
+    print("  three lucky wins is not evidence, and this is real money.\n")
+    return 0
+
+
 def cmd_config(args: argparse.Namespace, config: BotConfig) -> int:
     if getattr(args, "reset", False):
         return _reset_config(args.config)
@@ -678,6 +743,11 @@ def build_parser() -> argparse.ArgumentParser:
     reset = sub.add_parser("reset", help="wipe paper trading state")
     reset.add_argument("-y", "--yes", action="store_true")
     reset.set_defaults(func=cmd_reset)
+
+    learn = sub.add_parser("learn", help="what the bot has learned from its own trades")
+    learn.add_argument("--limit", type=int, default=25)
+    learn.add_argument("--json", action="store_true")
+    learn.set_defaults(func=cmd_learn)
 
     show = sub.add_parser("config", help="print the effective configuration")
     show.add_argument("--reset", action="store_true",

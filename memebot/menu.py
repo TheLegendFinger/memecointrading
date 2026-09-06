@@ -48,9 +48,10 @@ MENU: List[Item] = [
     Item("3", "Portfolio", "equity, open positions, win rate", "status", "LOOK"),
     Item("4", "Trade history", "recent fills with fees and P&L", "trades", "LOOK"),
     Item("5", "Scan the market", "what the bot sees right now", "scan", "LOOK"),
+    Item("6", "What it has learned", "which entries have actually worked", "learn", "LOOK"),
 
-    Item("6", "Wallet", "create, fund, back up, withdraw", "wallet", "SETUP"),
-    Item("7", "Health check", "are the market feeds reachable?", "doctor", "SETUP"),
+    Item("7", "Wallet", "create, fund, back up, withdraw", "wallet", "SETUP"),
+    Item("8", "Health check", "are the market feeds reachable?", "doctor", "SETUP"),
 
     Item("0", "Quit", "", "quit", ""),
 ]
@@ -143,7 +144,7 @@ class Menu:
             title = paint(f"{item.title:<22}", item.style or WHITE)
             desc = paint(item.description, GREY)
             self.output(f"{key}{title}{desc}")
-            if item.key in ("2", "5", "7"):
+            if item.key in ("2", "6", "8"):
                 self.output("")
 
         if self.message:
@@ -180,7 +181,7 @@ class Menu:
                 return 0
             item = next((i for i in MENU if i.key == choice), None)
             if item is None:
-                self.notify(f"'{choice}' is not on the menu - pick a number from 0 to 7.", YELLOW)
+                self.notify(f"'{choice}' is not on the menu - pick a number from 0 to 8.", YELLOW)
                 continue
             try:
                 self.dispatch(item.action)
@@ -359,6 +360,9 @@ class Menu:
     def do_scan(self) -> None:
         self.output(paint("\n  Scanning the live market, this takes a few seconds...\n", GREY))
         self._run_cli(self._with_config(["scan", "--limit", "20"]))
+
+    def do_learn(self) -> None:
+        self._run_cli(self._with_config(["learn"]))
 
     def do_doctor(self) -> None:
         self._run_cli(self._with_config(["doctor"]))

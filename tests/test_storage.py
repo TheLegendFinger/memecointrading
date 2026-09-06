@@ -170,7 +170,11 @@ def test_postgres_schema_uses_portable_types():
     assert "DOUBLE PRECISION" in ddl
     assert "AUTOINCREMENT" not in ddl, "SQLite-only syntax leaked into the Postgres schema"
     assert "INSERT OR REPLACE" not in ddl
-    assert ddl.count("CREATE TABLE IF NOT EXISTS") == 6  # + events, price_samples
+    tables = ["trades", "positions", "state", "events", "price_samples",
+              "trade_outcomes", "equity"]
+    for table in tables:
+        assert f"CREATE TABLE IF NOT EXISTS {table}" in ddl
+    assert ddl.count("CREATE TABLE IF NOT EXISTS") == len(tables)
 
 
 def test_postgres_queries_use_percent_placeholders():

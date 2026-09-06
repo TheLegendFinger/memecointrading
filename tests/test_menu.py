@@ -152,7 +152,8 @@ def test_every_menu_item_has_a_handler():
     ("3", ["status"]),
     ("4", ["trades", "--limit", "25"]),
     ("5", ["scan", "--limit", "20"]),
-    ("7", ["doctor"]),
+    ("6", ["learn"]),
+    ("8", ["doctor"]),
 ])
 def test_read_only_actions_call_the_cli(monkeypatch, key, expected):
     calls = []
@@ -331,7 +332,7 @@ def test_logging_goes_to_the_file_while_the_display_is_up(monkeypatch, tmp_path)
 # ---- the wallet submenu --------------------------------------------------------
 def test_the_wallet_submenu_offers_every_operation(monkeypatch):
     monkeypatch.setattr(Menu, "ensure_solana_packages", lambda self: True)
-    menu, driver = menu_for("6", "0", "0")
+    menu, driver = menu_for("7", "0", "0")
     menu.run()
 
     for expected in ("Show wallet", "Create a new wallet", "Show seed phrase",
@@ -344,7 +345,7 @@ def test_the_wallet_submenu_installs_the_solana_packages_first(monkeypatch):
     calls = []
     monkeypatch.setattr(Menu, "ensure_solana_packages",
                         lambda self: calls.append(True) or True)
-    menu, _driver = menu_for("6", "0", "0")
+    menu, _driver = menu_for("7", "0", "0")
     menu.run()
     assert calls, "the wallet menu must ensure its dependencies"
 
@@ -354,7 +355,7 @@ def test_the_wallet_submenu_stops_when_packages_cannot_be_installed(monkeypatch)
     shown = []
     monkeypatch.setattr(Menu, "_wallet_cli", lambda self, **kw: shown.append(kw))
 
-    menu, _driver = menu_for("6", "0")
+    menu, _driver = menu_for("7", "0")
     menu.run()
     assert shown == [], "nothing should run without the packages"
 
@@ -369,7 +370,7 @@ def test_wallet_options_call_the_right_command(monkeypatch, key, expected):
     calls = []
     monkeypatch.setattr(Menu, "_wallet_cli", lambda self, **kw: calls.append(kw) or 0)
     # option 3 asks for confirmation before revealing the phrase
-    answers = ["6", key] + (["y"] if key == "3" else []) + ["", "0", "0"]
+    answers = ["7", key] + (["y"] if key == "3" else []) + ["", "0", "0"]
 
     menu, _driver = menu_for(*answers)
     menu.run()
@@ -383,7 +384,7 @@ def test_the_seed_phrase_is_not_shown_without_confirmation(monkeypatch):
     calls = []
     monkeypatch.setattr(Menu, "_wallet_cli", lambda self, **kw: calls.append(kw) or 0)
 
-    menu, driver = menu_for("6", "3", "n", "", "0", "0")
+    menu, driver = menu_for("7", "3", "n", "", "0", "0")
     menu.run()
 
     assert calls == [], "declining must not print the phrase"
@@ -398,7 +399,7 @@ def test_creating_a_second_wallet_warns_instead_of_replacing(monkeypatch, tmp_pa
     calls = []
     monkeypatch.setattr(Menu, "_wallet_cli", lambda self, **kw: calls.append(kw) or 0)
 
-    menu, driver = menu_for("6", "2", "", "0", "0")
+    menu, driver = menu_for("7", "2", "", "0", "0")
     menu.run()
 
     assert calls == [], "it must not create over an existing wallet"
@@ -412,7 +413,7 @@ def test_withdrawing_warns_while_positions_are_open(monkeypatch):
     calls = []
     monkeypatch.setattr(Menu, "_wallet_cli", lambda self, **kw: calls.append(kw) or 0)
 
-    menu, driver = menu_for("6", "5", "n", "", "0", "0")
+    menu, driver = menu_for("7", "5", "n", "", "0", "0")
     menu.run()
 
     assert "still holds 2 position" in driver.text

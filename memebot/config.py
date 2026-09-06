@@ -124,6 +124,31 @@ class SafetyConfig:
 
 
 @dataclass
+class LearningConfig:
+    """Learning a tilt from the bot's own closed trades.
+
+    Deliberately timid. A few dozen memecoin trades is a violent sample, so the
+    numbers below exist to stop it betting the wallet on a lucky streak.
+    """
+
+    enabled: bool = True
+    # Nothing is applied until this many trades have closed. Recording starts
+    # from the first trade regardless.
+    min_trades: int = 30
+    # A bucket needs this many of its own before it counts at all.
+    min_bucket_trades: int = 4
+    # Shrinkage: an edge is trusted n/(n+k) of the way. Higher = more sceptical.
+    shrinkage_trades: float = 10.0
+    # Return-edge to score-points. 1.0: a +10% edge moves the score by 0.10.
+    sensitivity: float = 1.0
+    # The hard ceiling on the whole tilt, so this can never replace the strategy.
+    max_adjustment: float = 0.10
+    # How many closed trades to learn from, newest first.
+    max_trades: int = 500
+    refresh_seconds: float = 300.0
+
+
+@dataclass
 class StrategyConfig:
     name: str = "momentum"
     # Minimum composite score (0..1) required to open a position.
@@ -200,6 +225,7 @@ class BotConfig:
     filters: FilterConfig = field(default_factory=FilterConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
     strategy: StrategyConfig = field(default_factory=StrategyConfig)
+    learning: LearningConfig = field(default_factory=LearningConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
 
@@ -228,6 +254,10 @@ class BotConfig:
             value = getattr(self.safety, name)
             if not 0 <= value <= 1:
                 errors.append(f"safety.{name} must be a fraction in [0, 1]")
+        if not 0 <= self.learning.max_adjustment <= 0.5:
+            errors.append("learning.max_adjustment must be in [0, 0.5] - it is a tilt")
+        if self.learning.min_trades < 1:
+            errors.append("learning.min_trades must be >= 1")
         if errors:
             raise ValueError("Invalid configuration:\n  - " + "\n  - ".join(errors))
 
@@ -399,6 +429,7 @@ LEGACY_EXAMPLE_FINGERPRINTS = {
     "0ed372b12dbc45abdf7e00781dba0abdace679bc44c4c83ee7400d2dad295693",
     "937ebaca630dc6889badccc7bf808b9bfdfbef9438f62d2653f9606d05fb4207",
     "1022bd193340be32ec30ad9c9d95e6ed70ee19ae53fb462788ecc28429d788a3",
+    "bb4e33b2451470fa3e43dd96e3917b241cb08001f961d6e84ec7ff274cebe396",
 }
 
 
